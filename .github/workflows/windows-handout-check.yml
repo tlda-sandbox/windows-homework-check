@@ -1,0 +1,101 @@
+name: Windows handout check
+
+# What this exercises, and what it does not.
+#
+# It downloads the PUBLIC student handout zips exactly as a student does,
+# extracts them, and renders each handout with local R on a GitHub-hosted
+# Windows runner (windows-latest). It records, per handout: the extraction
+# nesting, the project configuration, the working directory R sees, whether
+# data/*.csv resolves, whether with_seed() runs, and the full render output
+# (uploaded as the render-log artifact).
+#
+# It does NOT exercise interactive Positron. Batch rendering and the IDE are
+# different execution modes; a Positron proof still needs a desktop run on
+# Windows. This repo only answers the batch-render question.
+#
+# Re-run: Actions -> "Windows handout check" -> Run workflow.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  windows-render:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Download the published student handouts
+        run: |
+          $base = "https://qtm285.github.io/static/book/homework/handouts"
+          New-Item -ItemType Directory -Force "$env:GITHUB_WORKSPACE/work" | Out-Null
+          foreach ($hw in @("homework-comparing-estimators-handout.zip", "homework-random-variables-and-moments-handout.zip")) {
+            Invoke-WebRequest -Uri "$base/$hw" -OutFile "$env:GITHUB_WORKSPACE/work/$hw"
+          }
+          Get-ChildItem "$env:GITHUB_WORKSPACE/work" | Select-Object Name, Length | Format-Table
+
+      - name: Extract and record the nesting
+        run: |
+          $root = $env:GITHUB_WORKSPACE
+          foreach ($zip in Get-ChildItem "$root/work/*.zip") {
+            $dest = Join-Path "$root/extract" $zip.BaseName
+            Expand-Archive -Path $zip.FullName -DestinationPath $dest -Force
+          }
+          $tree = Get-ChildItem "$root/extract" -Recurse -Depth 3 | ForEach-Object { $_.FullName.Substring($root.Length + 1) }
+          $tree | Out-File -Encoding utf8 "$root/extract-tree.txt"
+          $tree
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: 'release'
+
+      - uses: quarto-dev/quarto-actions/setup@v2
+
+      - name: Install the R packages the handouts load
+        run: |
+          Rscript -e "install.packages(c('tidyverse', 'gt', 'htmltools', 'kableExtra', 'knitr', 'rmarkdown', 'scales'), repos = 'https://cloud.r-project.org')"
+
+      - name: Render each handout from its extracted folder
+        run: |
+          $root = $env:GITHUB_WORKSPACE
+          $log = "$root/render-log.txt"
+          "Windows handout check - $(Get-Date -Format o)" | Set-Content -Encoding utf8 $log
+          (& Rscript -e "cat(R.version.string)") 2>&1 | Add-Content $log
+          (& quarto --version) 2>&1 | Add-Content $log
+          $fail = 0
+          $projects = Get-ChildItem "$root/extract" -Recurse -Directory | Where-Object { Test-Path (Join-Path $_.FullName "_quarto.yml") }
+          if (-not $projects) { "NO PROJECTS FOUND - the extraction or the _quarto.yml marker is wrong" | Add-Content $log; Get-Content $log; exit 1 }
+          foreach ($p in $projects) {
+            $name = $p.FullName.Substring($root.Length + 1)
+            "=== PROJECT $name ===" | Add-Content $log
+            Push-Location $p.FullName
+            "--- _quarto.yml ---" | Add-Content $log
+            Get-Content "_quarto.yml" | Add-Content $log
+            "--- folder listing ---" | Add-Content $log
+            (Get-ChildItem -Name) | Add-Content $log
+            "--- R working directory and data resolution ---" | Add-Content $log
+            (& Rscript -e "cat('getwd:', getwd(), '\n'); cat('data/ entries:', length(list.files('data')), '\n'); csv <- head(list.files('data', pattern = '[.]csv$'), 1); cat('first csv:', csv, '\n'); if (!is.na(csv)) { d <- read.csv(file.path('data', csv)); cat('read.csv rows:', nrow(d), '\n') }") 2>&1 | Add-Content $log
+            "--- direct with_seed probe (not a student path; isolates seed over a read) ---" | Add-Content $log
+            (& Rscript -e "with_seed <- function(x, seed = 1) { set.seed(seed); force(x) }; csv <- head(list.files('data', pattern = '[.]csv$'), 1); if (!is.na(csv)) { d <- with_seed(read.csv(file.path('data', csv))); cat('with_seed(read.csv()) rows:', nrow(d), '\n') }") 2>&1 | Add-Content $log
+            "--- quarto render ---" | Add-Content $log
+            (& quarto render) 2>&1 | Add-Content $log
+            "--- exit code: $LASTEXITCODE ($name) ---" | Add-Content $log
+            if ($LASTEXITCODE -ne 0) { $fail = 1; "RENDER FAILED: $name" | Add-Content $log }
+            Pop-Location
+          }
+          "===== render-log.txt ====="
+          Get-Content $log
+          Set-Content -Encoding utf8 "$root/render-status.txt" "fail=$fail"
+          exit $fail
+
+      - name: Upload logs and tree
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: render-logs
+          path: |
+            render-log.txt
+            render-status.txt
+            extract-tree.txt
