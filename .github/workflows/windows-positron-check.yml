@@ -26,6 +26,7 @@ jobs:
     steps:
       - name: Session facts
         run: |
+          $ErrorActionPreference = 'Continue'
           $root = $env:GITHUB_WORKSPACE
           $log = "$root/session-facts.txt"
           "runner session facts - $(Get-Date -Format o)" | Set-Content -Encoding utf8 $log
@@ -38,13 +39,17 @@ jobs:
           "conhost processes: $((Get-Process conhost -ErrorAction SilentlyContinue | Measure-Object).Count)" | Add-Content $log
           "R on PATH: $((Get-Command R.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source) -join ', ')" | Add-Content $log
           Get-Content $log
+          exit 0
 
       - uses: r-lib/actions/setup-r@v2
+        if: always()
         with:
           r-version: 'release'
 
       - name: Download and install Positron
+        if: always()
         run: |
+          $ErrorActionPreference = 'Continue'
           $root = $env:GITHUB_WORKSPACE
           $log = "$root/positron-install.txt"
           $url = "https://cdn.posit.co/positron/releases/win/x86_64/Positron-2026.10.0-297-UserSetup-x64.exe"
@@ -64,9 +69,12 @@ jobs:
           "positron exe: $($found -join ', ')" | Add-Content $log
           "POSITRON_EXE=$($found | Select-Object -First 1)" | Add-Content -Path $env:GITHUB_ENV -Encoding utf8
           Get-Content $log
+          exit 0
 
       - name: Download and extract the public handouts
+        if: always()
         run: |
+          $ErrorActionPreference = 'Continue'
           $root = $env:GITHUB_WORKSPACE
           $base = "https://qtm285.github.io/static/book/homework/handouts"
           New-Item -ItemType Directory -Force "$root/work" | Out-Null
@@ -79,7 +87,9 @@ jobs:
           Get-ChildItem "$root/work" | Select-Object Name, Length | Format-Table
 
       - name: Launch Positron on the extracted HW5 folder
+        if: always()
         run: |
+          $ErrorActionPreference = 'Continue'
           $root = $env:GITHUB_WORKSPACE
           $log = "$root/positron-run.txt"
           "launch - $(Get-Date -Format o)" | Set-Content -Encoding utf8 $log
@@ -115,10 +125,12 @@ jobs:
           "kernel candidates (ark/kallichore/kcserver/Rterm):" | Add-Content $log
           ((Get-Process ark, kallichore, kcserver, Rterm -ErrorAction SilentlyContinue | Select-Object Id, ProcessName, SessionId | Format-Table | Out-String).Trim()) | Add-Content $log
           Get-Content $log
+          exit 0
 
       - name: Attach over CDP and read the workbench
         if: always()
         run: |
+          $ErrorActionPreference = 'Continue'
           $root = $env:GITHUB_WORKSPACE
           npm install ws --no-save --silent --prefix $root | Out-Null
           $log = "$root/cdp-output.txt"
@@ -137,10 +149,12 @@ jobs:
             "exit: $LASTEXITCODE" | Add-Content $log
           }
           Get-Content $log
+          exit 0
 
       - name: Start the R session and probe the console
         if: always()
         run: |
+          $ErrorActionPreference = 'Continue'
           $root = $env:GITHUB_WORKSPACE
           $d = "$root/positron-drive.mjs"
           $log = "$root/session-start.txt"
@@ -165,10 +179,12 @@ jobs:
           "positron console panel text:" | Add-Content $log
           (node $d 9222 console 2>&1) | Add-Content $log
           Get-Content $log
+          exit 0
 
       - name: Collect Positron logs
         if: always()
         run: |
+          $ErrorActionPreference = 'Continue'
           $root = $env:GITHUB_WORKSPACE
           $dest = "$root/positron-logs"
           New-Item -ItemType Directory -Force $dest | Out-Null
@@ -182,6 +198,7 @@ jobs:
           }
           Get-ChildItem -Recurse $dest -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '\.log$' } | Select-Object -First 40 FullName, Length | Format-Table | Out-File -Append -Encoding utf8 "$root/log-collection.txt"
           Get-Content "$root/log-collection.txt"
+          exit 0
 
       - name: Upload evidence
         if: always()
