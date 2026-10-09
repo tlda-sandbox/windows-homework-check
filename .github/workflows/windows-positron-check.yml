@@ -1,0 +1,199 @@
+name: Windows Positron check
+
+# Bounded experiment: can the ACTUAL Positron IDE run and be reached on this
+# hosted windows-latest runner? It measures, in order:
+#   1. the runner's real session shape (interactive desktop or service session);
+#   2. Positron 2026.10.0-297 x64 installed silently, R present;
+#   3. the actual public handout zip extracted;
+#   4. Positron launched on the extracted folder with the same isolation +
+#      debug-port flags that work on the Mac seat;
+#   5. whether its Electron debug port answers, and what the workbench DOM says
+#      over CDP (Target.attachToTarget, Runtime.evaluate);
+#   6. whether an R kernel process (ark / kallichore) ever appears;
+#   7. Positron's own logs.
+# Every step is bounded and every failure prints where it stopped; artifacts
+# carry all logs. This does not touch the batch handout workflow.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  positron:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Session facts
+        run: |
+          $root = $env:GITHUB_WORKSPACE
+          $log = "$root/session-facts.txt"
+          "runner session facts - $(Get-Date -Format o)" | Set-Content -Encoding utf8 $log
+          "whoami: $(whoami)" | Add-Content $log
+          "user interactive: $([Environment]::UserInteractive)" | Add-Content $log
+          "this process session id: $((Get-Process -Id $PID).SessionId)" | Add-Content $log
+          "query session output:" | Add-Content $log
+          (query session 2>&1) | Add-Content $log
+          "explorer processes: $((Get-Process explorer -ErrorAction SilentlyContinue | Measure-Object).Count)" | Add-Content $log
+          "conhost processes: $((Get-Process conhost -ErrorAction SilentlyContinue | Measure-Object).Count)" | Add-Content $log
+          "R on PATH: $((Get-Command R.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source) -join ', ')" | Add-Content $log
+          Get-Content $log
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: 'release'
+
+      - name: Download and install Positron
+        run: |
+          $root = $env:GITHUB_WORKSPACE
+          $log = "$root/positron-install.txt"
+          $url = "https://cdn.posit.co/positron/releases/win/x86_64/Positron-2026.10.0-297-UserSetup-x64.exe"
+          $exe = "$root/Positron-setup.exe"
+          "downloading $url" | Set-Content -Encoding utf8 $log
+          Invoke-WebRequest -Uri $url -OutFile $exe
+          "downloaded bytes: $((Get-Item $exe).Length)" | Add-Content $log
+          $proc = Start-Process -FilePath $exe -ArgumentList '/S' -Wait -PassThru
+          "installer exit code: $($proc.ExitCode)" | Add-Content $log
+          $found = @("$env:LOCALAPPDATA\Programs\Positron\Positron.exe", "$env:ProgramFiles\Positron\Positron.exe") | Where-Object { Test-Path $_ }
+          if (-not $found) {
+            "no installed exe found; extracting the installer with 7z" | Add-Content $log
+            $dest = "$root/positron-extract"
+            & 7z x $exe "-o$dest" -y | Out-Null
+            $found = @(Get-ChildItem -Path $dest -Recurse -Filter Positron.exe | Select-Object -First 1 -ExpandProperty FullName)
+          }
+          "positron exe: $($found -join ', ')" | Add-Content $log
+          "POSITRON_EXE=$($found | Select-Object -First 1)" | Add-Content -Path $env:GITHUB_ENV -Encoding utf8
+          Get-Content $log
+
+      - name: Download and extract the public handouts
+        run: |
+          $root = $env:GITHUB_WORKSPACE
+          $base = "https://qtm285.github.io/static/book/homework/handouts"
+          New-Item -ItemType Directory -Force "$root/work" | Out-Null
+          foreach ($hw in @("homework-comparing-estimators-handout.zip", "homework-random-variables-and-moments-handout.zip")) {
+            Invoke-WebRequest -Uri "$base/$hw" -OutFile "$root/work/$hw"
+            $dest = Join-Path "$root/extract" ($hw -replace '\.zip$', '')
+            Expand-Archive -Path "$root/work/$hw" -DestinationPath $dest -Force
+          }
+          (Get-ChildItem "$root/extract" -Recurse -Depth 2 | ForEach-Object { $_.FullName.Substring($root.Length + 1) }) | Out-File -Encoding utf8 "$root/extract-tree.txt"
+          Get-ChildItem "$root/work" | Select-Object Name, Length | Format-Table
+
+      - name: Launch Positron on the extracted HW5 folder
+        run: |
+          $root = $env:GITHUB_WORKSPACE
+          $log = "$root/positron-run.txt"
+          "launch - $(Get-Date -Format o)" | Set-Content -Encoding utf8 $log
+          $exe = $env:POSITRON_EXE
+          "exe: $exe" | Add-Content $log
+          $folder = "$root/extract/homework-comparing-estimators-handout/homework-comparing-estimators"
+          "folder exists: $(Test-Path $folder)" | Add-Content $log
+          $iso = "$root/positron-iso"
+          New-Item -ItemType Directory -Force "$iso/user", "$iso/ext", "$iso/shared" | Out-Null
+          $argList = @(
+            "--user-data-dir=$iso\user", "--extensions-dir=$iso\ext", "--shared-data-dir=$iso\shared",
+            "--remote-debugging-port=9222", "--no-sandbox", "--new-window", "--disable-workspace-trust", $folder
+          )
+          $proc = Start-Process -FilePath $exe -ArgumentList $argList -PassThru
+          "launched pid $($proc.Id)" | Add-Content $log
+          $reachable = $false
+          for ($i = 1; $i -le 45; $i++) {
+            Start-Sleep -Seconds 2
+            try {
+              $v = Invoke-RestMethod -Uri "http://127.0.0.1:9222/json/version" -TimeoutSec 3
+              "CDP answered after $($i * 2)s: $($v | ConvertTo-Json -Compress)" | Add-Content $log
+              $reachable = $true
+              break
+            } catch { }
+            if ($proc.HasExited) {
+              "positron process exited after $($i * 2)s, code $($proc.ExitCode)" | Add-Content $log
+              break
+            }
+          }
+          if (-not $reachable) { "CDP never answered within the bound" | Add-Content $log }
+          "positron-family processes:" | Add-Content $log
+          ((Get-Process | Where-Object { $_.ProcessName -match 'positron' } | Select-Object Id, ProcessName, SessionId, WorkingSet | Format-Table | Out-String).Trim()) | Add-Content $log
+          "kernel candidates (ark/kallichore/kcserver/Rterm):" | Add-Content $log
+          ((Get-Process ark, kallichore, kcserver, Rterm -ErrorAction SilentlyContinue | Select-Object Id, ProcessName, SessionId | Format-Table | Out-String).Trim()) | Add-Content $log
+          Get-Content $log
+
+      - name: Attach over CDP and read the workbench
+        if: always()
+        run: |
+          $root = $env:GITHUB_WORKSPACE
+          npm install ws --no-save --silent --prefix $root | Out-Null
+          $log = "$root/cdp-output.txt"
+          "cdp session - $(Get-Date -Format o)" | Set-Content -Encoding utf8 $log
+          "node: $(node --version)" | Add-Content $log
+          $steps = @(
+            @('targets'),
+            @('eval', 'document.title'),
+            @('eval', "[...document.querySelectorAll('.tab')].map(t=>t.textContent.trim()).join(' | ')"),
+            @('console'),
+            @('inputstate')
+          )
+          foreach ($s in $steps) {
+            "=== drive $($s -join ' ') ===" | Add-Content $log
+            (node "$root/positron-drive.mjs" 9222 @s 2>&1) | Add-Content $log
+            "exit: $LASTEXITCODE" | Add-Content $log
+          }
+          Get-Content $log
+
+      - name: Start the R session and probe the console
+        if: always()
+        run: |
+          $root = $env:GITHUB_WORKSPACE
+          $d = "$root/positron-drive.mjs"
+          $log = "$root/session-start.txt"
+          "session start - $(Get-Date -Format o)" | Set-Content -Encoding utf8 $log
+          $attempts = @(
+            @('clicktext', 'Start Session'),
+            @('inputstate'),
+            @('clicktext', 'Start Session'),
+            @('inputstate'),
+            @('pick', 'R 4'),
+            @('r', 'cat("ZZ", getwd(), exists("with_seed"), "\n")'),
+            @('console')
+          )
+          foreach ($s in $attempts) {
+            "=== drive $($s -join ' ') ===" | Add-Content $log
+            (node $d 9222 @s 2>&1) | Add-Content $log
+            "exit: $LASTEXITCODE" | Add-Content $log
+            Start-Sleep -Seconds 4
+          }
+          "kernel candidates after the attempt:" | Add-Content $log
+          ((Get-Process ark, kallichore, kcserver, Rterm -ErrorAction SilentlyContinue | Select-Object Id, ProcessName, SessionId | Format-Table | Out-String).Trim()) | Add-Content $log
+          "positron console panel text:" | Add-Content $log
+          (node $d 9222 console 2>&1) | Add-Content $log
+          Get-Content $log
+
+      - name: Collect Positron logs
+        if: always()
+        run: |
+          $root = $env:GITHUB_WORKSPACE
+          $dest = "$root/positron-logs"
+          New-Item -ItemType Directory -Force $dest | Out-Null
+          foreach ($candidate in @("$env:APPDATA\Positron", "$env:USERPROFILE\.positron", "$env:USERPROFILE\.positron-shared", "$root/positron-iso/user/logs")) {
+            if (Test-Path $candidate) {
+              "copying $candidate" | Out-File -Append -Encoding utf8 "$root/log-collection.txt"
+              Copy-Item -Recurse -Force $candidate "$dest" -ErrorAction SilentlyContinue
+            } else {
+            "absent: $candidate" | Out-File -Append -Encoding utf8 "$root/log-collection.txt"
+            }
+          }
+          Get-ChildItem -Recurse $dest -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '\.log$' } | Select-Object -First 40 FullName, Length | Format-Table | Out-File -Append -Encoding utf8 "$root/log-collection.txt"
+          Get-Content "$root/log-collection.txt"
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: positron-check-evidence
+          path: |
+            session-facts.txt
+            positron-install.txt
+            positron-run.txt
+            cdp-output.txt
+            session-start.txt
+            extract-tree.txt
+            log-collection.txt
+            positron-logs
