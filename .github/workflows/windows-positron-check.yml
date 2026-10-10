@@ -49,6 +49,16 @@ jobs:
         with:
           r-version: 'release'
 
+      - name: Install the R packages the handouts load
+        if: always()
+        timeout-minutes: 20
+        run: |
+          $ErrorActionPreference = 'Continue'
+          Rscript -e "install.packages(c('tidyverse', 'gt', 'htmltools', 'kableExtra', 'knitr', 'rmarkdown', 'scales'), repos = 'https://cloud.r-project.org')" *>&1 | Select-Object -Last 3
+          Rscript -e "cat('tidyverse present:', requireNamespace('tidyverse', quietly = TRUE), '
+')"
+          exit 0
+
       - name: Download and install Positron
         if: always()
         timeout-minutes: 15
@@ -204,19 +214,20 @@ jobs:
           "session start - $(Get-Date -Format o)" | Set-Content -Encoding utf8 $log
           $attempts = @(
             @('open', 'homework-comparing-estimators.qmd'),
-            @('waitconsole', 'R 4.6.1 started', '150'),
+            @('waitconsole', 'R 4.6.1 started', '300'),
             @('console'),
-            @('r', 'cat("ZZ", getwd(), exists("with_seed"), "\n")'),
-            @('waitconsole', 'ZZ', '60'),
+            @('r', 'cat("BEFORE", getwd(), exists("with_seed"), exists("bind_rows"), "\n")'),
+            @('waitconsole', 'BEFORE', '60'),
             @('console'),
-            @('screenshot', 'console-probe.png'),
+            @('screenshot', 'before-runall.png'),
             @('click', '[aria-label="Run All"]'),
-            @('sleep', '120'),
+            @('sleep', '240'),
             @('console'),
-            @('screenshot', 'run-all-120s.png'),
-            @('sleep', '120'),
+            @('screenshot', 'after-runall.png'),
+            @('r', 'cat("AFTER", exists("with_seed"), exists("bind_rows"), "\n")'),
+            @('waitconsole', 'AFTER', '60'),
             @('console'),
-            @('screenshot', 'run-all-240s.png')
+            @('screenshot', 'after-probe.png')
           )
           foreach ($s in $attempts) {
             "=== drive $($s -join ' ') ===" | Add-Content $log
