@@ -177,6 +177,26 @@ jobs:
           Get-Content "$root/make-library-run.txt"
           exit 0
 
+      - name: Insert the source chunk into the extracted HW5 qmd
+        if: always()
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $root = $env:GITHUB_WORKSPACE
+          $qmd = "$root/extract/homework-comparing-estimators-handout/homework-comparing-estimators/homework-comparing-estimators.qmd"
+          $lines = Get-Content $qmd
+          $close = -1
+          if ($lines.Count -gt 1 -and $lines[0].Trim() -eq '---') {
+            for ($i = 1; $i -lt $lines.Count; $i++) { if ($lines[$i].Trim() -eq '---') { $close = $i; break } }
+          }
+          if ($close -lt 0) { "NO FRONT MATTER - aborting insert" | Tee-Object "$root/source-chunk-note.txt"; exit 0 }
+          $chunk = @('', '```{r}', '#| include: false', 'for (f in sort(list.files("qtm285base/R", pattern = "[.][Rr]$", full.names = TRUE))) source(f)', '```')
+          $out = @($lines[0..$close]) + $chunk + $(if ($close + 1 -le $lines.Count - 1) { @($lines[($close + 1)..($lines.Count - 1)]) } else { @() })
+          Set-Content -Path $qmd -Value $out -Encoding utf8
+          "inserted the source chunk after front-matter close at line $close" | Tee-Object "$root/source-chunk-note.txt"
+          Get-Content $qmd | Select-Object -First 26 | Add-Content "$root/source-chunk-note.txt"
+          Get-Content "$root/source-chunk-note.txt"
+          exit 0
+
       - name: Launch Positron on the extracted HW5 folder
         if: always()
         timeout-minutes: 10
@@ -252,19 +272,15 @@ jobs:
           $log = "$root/session-start.txt"
           "session start - $(Get-Date -Format o)" | Set-Content -Encoding utf8 $log
           $attempts = @(
-            @('open', 'probe.qmd'),
-            @('waitconsole', 'R 4.6.1 started', '300'),
-            @('click', '[aria-label="Run All"]'),
-            @('sleep', '45'),
-            @('console'),
-            @('screenshot', 'probe-with-library.png'),
-            @('scrollconsole', '-500', '4'),
-            @('screenshot', 'console-startup-scrolled.png'),
             @('open', 'homework-comparing-estimators.qmd'),
+            @('waitconsole', 'R 4.6.1 started', '300'),
             @('click', '[aria-label="Run All"]'),
             @('sleep', '240'),
             @('console'),
-            @('screenshot', 'hw5-runall-library-240s.png')
+            @('screenshot', 'hw5-runall-sourcechunk-240s.png'),
+            @('sleep', '120'),
+            @('console'),
+            @('screenshot', 'hw5-runall-sourcechunk-360s.png')
           )
           foreach ($s in $attempts) {
             "=== drive $($s -join ' ') ===" | Add-Content $log
@@ -312,5 +328,6 @@ jobs:
             extract-tree.txt
             log-collection.txt
             make-library-run.txt
+            source-chunk-note.txt
             *.png
             positron-logs
