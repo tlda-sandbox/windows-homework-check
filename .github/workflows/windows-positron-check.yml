@@ -203,17 +203,13 @@ jobs:
           $log = "$root/session-start.txt"
           "session start - $(Get-Date -Format o)" | Set-Content -Encoding utf8 $log
           $attempts = @(
-            @('clicktext', 'Start Session'),
-            @('waitpick', 'R 4', '30'),
-            @('inputstate'),
-            @('clicktext', 'Start Session'),
-            @('waitpick', 'R 4', '30'),
+            @('open', 'homework-comparing-estimators.qmd'),
+            @('waitconsole', 'R 4.6.1 started', '90'),
             @('console'),
             @('r', 'cat("ZZ", getwd(), exists("with_seed"), "\n")'),
             @('console'),
-            @('open', 'homework-comparing-estimators.qmd'),
-            @('console'),
             @('click', '[aria-label="Run All"]'),
+            @('console'),
             @('console'),
             @('console')
           )

@@ -61,7 +61,7 @@ switch (action) {
   case 'eval':
     console.log(await ev(args.join(' '))); break
   case 'console':
-    console.log(await ev(`(()=>{const c=document.getElementById("workbench.panel.positronConsole"); return c? c.textContent.trim():"NO CONSOLE"})()`)); break
+    console.log(await ev(`(()=>{const c=document.getElementById("workbench.panel.positronConsole"); return c? c.textContent.trim().slice(-1500):"NO CONSOLE"})()`)); break
   case 'open': {
     const label = args.join(' ')
     const rect = JSON.parse(await ev(`(()=>{const rows=[...document.querySelectorAll('.monaco-list-row')];
@@ -108,7 +108,20 @@ switch (action) {
     await send('Input.insertText', { text: code }, sid)
     await pressEnter()
     await new Promise(r => setTimeout(r, 2500))
-    console.log(await ev(`(()=>{const c=document.getElementById("workbench.panel.positronConsole"); return c? c.textContent.trim().slice(-400):"NO CONSOLE"})()`))
+    console.log(await ev(`(()=>{const c=document.getElementById("workbench.panel.positronConsole"); return c? c.textContent.trim().slice(-1500):"NO CONSOLE"})()`))
+    break
+  }
+  case 'waitconsole': {
+    const secs = Math.max(5, Number(args.pop()) || 30)
+    const needle = args.join(' ')
+    const deadline = Date.now() + secs * 1000
+    let text = ''
+    do {
+      text = await ev(`(()=>{const c=document.getElementById("workbench.panel.positronConsole"); return c? c.textContent.trim():"NO CONSOLE"})()`)
+      if (String(text).includes(needle)) { console.log(`console contains "${needle}"`); break }
+      await new Promise(r => setTimeout(r, 1500))
+    } while (Date.now() < deadline)
+    console.log(String(text).slice(-1500))
     break
   }
   case 'pick':
