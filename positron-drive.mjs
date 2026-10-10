@@ -100,15 +100,30 @@ switch (action) {
   }
   case 'r': {
     const code = args.join(' ')
-    const focused = await ev(`(()=>{const inputs=[...document.querySelectorAll('.positron-console textarea, .positron-console input, textarea.inputarea')];
-      const t=inputs.find(i=>i.offsetParent)||inputs[0];
-      if(!t) return 'NO_INPUT';
-      t.focus(); return t.className.slice(0,40)})()`)
-    if (focused === 'NO_INPUT') { console.error('no console input found'); process.exit(8) }
+    const rect = JSON.parse(await ev(`(()=>{
+      const scoped=[...document.querySelectorAll('#workbench.panel.positronConsole textarea, .positron-console textarea, .positron-console input')];
+      const t=scoped.find(i=>i.offsetParent)||document.querySelector('textarea.inputarea');
+      if(!t) return JSON.stringify({found:false});
+      const b=t.getBoundingClientRect();
+      return JSON.stringify({found:true,x:b.x+b.width/2,y:b.y+b.height/2,cls:t.className.slice(0,60),id:t.closest('[id]')?.id||''})})()`))
+    if (!rect.found) { console.error('no console input found'); process.exit(8) }
+    console.error(`# console input: ${rect.cls} (${rect.id})`)
+    await clickAt(rect.x, rect.y)          // a real click, so focus lands like a user's
+    await new Promise(r => setTimeout(r, 400))
     await send('Input.insertText', { text: code }, sid)
+    await new Promise(r => setTimeout(r, 600))
     await pressEnter()
-    await new Promise(r => setTimeout(r, 2500))
+    await new Promise(r => setTimeout(r, 3000))
     console.log(await ev(`(()=>{const c=document.getElementById("workbench.panel.positronConsole"); return c? c.textContent.trim().slice(-3000):"NO CONSOLE"})()`))
+    break
+  }
+  case 'screenshot': {
+    const target = args[0] || 'screenshot.png'
+    const shot = await send('Page.captureScreenshot', { format: 'png' }, sid)
+    if (!shot.result?.data) { console.error('captureScreenshot failed:', JSON.stringify(shot).slice(0, 200)); process.exit(9) }
+    const fsMod = await import('node:fs')
+    fsMod.writeFileSync(target, Buffer.from(shot.result.data, 'base64'))
+    console.log(`screenshot written: ${target}`)
     break
   }
   case 'sleep': {
