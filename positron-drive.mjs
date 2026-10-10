@@ -111,13 +111,24 @@ switch (action) {
     console.log(await ev(`(()=>{const c=document.getElementById("workbench.panel.positronConsole"); return c? c.textContent.trim().slice(-400):"NO CONSOLE"})()`))
     break
   }
-  case 'pick': {
+  case 'pick':
+  case 'waitpick': {
+    const wait = action === 'waitpick' ? Math.max(5, Number(args.pop()) || 20) : 0
     const needle = args.join(' ')
-    const rect = JSON.parse(await ev(`(()=>{const rows=[...document.querySelectorAll('.monaco-list-row')];
+    const findRect = () => ev(`(()=>{
+      const quick=[...document.querySelectorAll('.quick-input-widget .monaco-list-row')];
+      const rows=quick.length?quick:[...document.querySelectorAll('.monaco-list-row')];
       const r=rows.find(x=>(x.textContent||'').includes(${JSON.stringify(needle)}));
-      if(!r) return JSON.stringify({found:false, sample: rows.map(x=>(x.textContent||'').trim()).slice(0,12)});
-      const b=r.getBoundingClientRect(); return JSON.stringify({found:true,x:b.x+b.width/2,y:b.y+b.height/2,t:r.textContent.trim().slice(0,60)})})()`))
-    if (!rect.found) { console.error('no row contains that text; sample:', rect.sample); process.exit(7) }
+      if(!r) return JSON.stringify({found:false, quickInput:!!document.querySelector('.quick-input-widget'), sample: rows.map(x=>(x.textContent||'').trim()).slice(0,12)});
+      const b=r.getBoundingClientRect(); return JSON.stringify({found:true,x:b.x+b.width/2,y:b.y+b.height/2,t:r.textContent.trim().slice(0,60)})})()`)
+    const deadline = Date.now() + wait * 1000
+    let rect
+    do {
+      rect = JSON.parse(await findRect())
+      if (rect.found) break
+      await new Promise(r => setTimeout(r, 1000))
+    } while (Date.now() < deadline)
+    if (!rect.found) { console.error(`no row contains "${needle}" (quickInput=${rect.quickInput}); sample:`, rect.sample); process.exit(7) }
     await clickAt(rect.x, rect.y)
     await new Promise(r => setTimeout(r, 600))
     await pressEnter()
