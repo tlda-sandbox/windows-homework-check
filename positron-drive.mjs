@@ -108,6 +108,8 @@ switch (action) {
       return JSON.stringify({found:true,x:b.x+b.width/2,y:b.y+b.height/2,cls:t.className.slice(0,60),id:t.closest('[id]')?.id||''})})()`))
     if (!rect.found) { console.error('no console input found'); process.exit(8) }
     console.error(`# console input: ${rect.cls} (${rect.id})`)
+    await send('Page.bringToFront', {}, sid)
+    await new Promise(r => setTimeout(r, 500))
     await clickAt(rect.x, rect.y)          // a real click, so focus lands like a user's
     await new Promise(r => setTimeout(r, 400))
     await send('Input.insertText', { text: code }, sid)
