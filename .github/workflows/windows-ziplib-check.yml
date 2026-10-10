@@ -1,0 +1,333 @@
+name: Windows ziplib check
+
+# Acceptance for the sourced-class-library fix (Skip #9215600): a zip built by
+# the REAL handout pipeline must (a) still render clean on Windows and (b) have
+# its chunks run under the real Positron Run All without "could not find
+# function" for include-defined helpers. Unlike windows-positron-check.yml this
+# workflow does NOT doctor the handout -- the fix is already in the fixture
+# zips, built by bin/build-handouts.py, and the extract step proves they carry
+# it before anything runs. Dispatched only.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  ziplib:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Session facts
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $root = $env:GITHUB_WORKSPACE
+          $log = "$root/session-facts.txt"
+          "runner session facts - $(Get-Date -Format o)" | Set-Content -Encoding utf8 $log
+          "whoami: $(whoami)" | Add-Content $log
+          "user interactive: $([Environment]::UserInteractive)" | Add-Content $log
+          "R on PATH: $((Get-Command R.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source) -join ', ')" | Add-Content $log
+          Get-Content $log
+          exit 0
+
+      - uses: r-lib/actions/setup-r@v2
+        if: always()
+        with:
+          r-version: 'release'
+
+      - name: Install the R packages the handouts load
+        if: always()
+        timeout-minutes: 20
+        run: |
+          $ErrorActionPreference = 'Continue'
+          Rscript -e "install.packages(c('tidyverse', 'gt', 'htmltools', 'kableExtra', 'knitr', 'rmarkdown', 'scales'), repos = 'https://cloud.r-project.org')" *>&1 | Select-Object -Last 3
+          Rscript -e "cat('tidyverse present:', requireNamespace('tidyverse', quietly = TRUE), sep = ' ')"
+          exit 0
+
+      - name: Download and install Positron
+        if: always()
+        timeout-minutes: 15
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $ProgressPreference = 'SilentlyContinue'
+          $root = $env:GITHUB_WORKSPACE
+          $log = "$root/positron-install.txt"
+          $url = "https://cdn.posit.co/positron/releases/win/x86_64/Positron-2026.10.0-297-UserSetup-x64.exe"
+          $exe = "$root/Positron-setup.exe"
+          "downloading $url" | Set-Content -Encoding utf8 $log
+          Invoke-WebRequest -Uri $url -OutFile $exe
+          "downloaded bytes: $((Get-Item $exe).Length)" | Add-Content $log
+          $proc = Start-Process -FilePath $exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', '/CURRENTUSER' -PassThru
+          if (-not $proc.WaitForExit(300000)) {
+            "Inno silent run still alive after 5 min - killing" | Add-Content $log
+            try { Stop-Process -Id $proc.Id -Force } catch { }
+          } else {
+            "installer exit code: $($proc.ExitCode)" | Add-Content $log
+          }
+          $found = @("$env:LOCALAPPDATA\Programs\Positron\Positron.exe", "$env:ProgramFiles\Positron\Positron.exe") | Where-Object { Test-Path $_ }
+          Get-Process | Where-Object { $_.ProcessName -match 'Positron-setup' } | ForEach-Object { try { Stop-Process -Id $_.Id -Force } catch { } }
+          "positron exe: $($found -join ', ')" | Add-Content $log
+          if (-not $found) { "POSITRON EXE MISSING - the launch step cannot proceed" | Add-Content $log }
+          "POSITRON_EXE=$($found | Select-Object -First 1)" | Add-Content -Path $env:GITHUB_ENV -Encoding utf8
+          Get-Content $log
+          exit 0
+
+      - name: Extract the fixture zips and prove they carry the fix
+        if: always()
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $root = $env:GITHUB_WORKSPACE
+          $log = "$root/fixed-build.txt"
+          New-Item -ItemType Directory -Force "$root/work" | Out-Null
+          foreach ($hw in @("homework-comparing-estimators-handout.zip", "homework-random-variables-and-moments-handout.zip")) {
+            Copy-Item "$root/fixtures/$hw" "$root/work/$hw" -Force
+            $dest = Join-Path "$root/extract" ($hw -replace '\.zip$', '')
+            Expand-Archive -Path "$root/work/$hw" -DestinationPath $dest -Force
+            $stem = $hw -replace '-handout\.zip$', ''
+            $qmd = "$dest/$stem/$stem.qmd"
+            "=== $stem ===" | Add-Content -Encoding utf8 $log
+            "class-library chunk present: $((Select-String -Path $qmd -Pattern 'class-library' -Quiet))" | Add-Content $log
+            "shared-style include present: $((Select-String -Path $qmd -Pattern 'include shared/shared-style.qmd' -Quiet))" | Add-Content $log
+            "old shared-code include present: $((Select-String -Path $qmd -Pattern 'include shared/shared-code.qmd' -Quiet))" | Add-Content $log
+            "library files:" | Add-Content $log
+            (Get-ChildItem "$dest/$stem/shared/qtm285base/R" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name) | Add-Content $log
+          }
+          (Get-ChildItem "$root/extract" -Recurse -Depth 3 | ForEach-Object { $_.FullName.Substring($root.Length + 1) }) | Out-File -Encoding utf8 "$root/extract-tree.txt"
+          Get-Content $log
+          exit 0
+
+      - name: Write the probe into both workspaces
+        if: always()
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $root = $env:GITHUB_WORKSPACE
+          $lines = @(
+            '---',
+            'title: probe',
+            'format: html',
+            '---',
+            '',
+            '```{r}',
+            '#| label: probe',
+            'cat("PROBE getwd:", getwd(), "\n")',
+            'cat("PROBE with_seed exists:", exists("with_seed"), "\n")',
+            'cat("PROBE with_seed call:", "\n")',
+            'print(try(with_seed(1)))',
+            'cat("PROBE moments.sampling.plot exists:", exists("moments.sampling.plot"), "\n")',
+            '```'
+          )
+          foreach ($stem in @("homework-comparing-estimators", "homework-random-variables-and-moments")) {
+            $folder = "$root/extract/$stem-handout/$stem"
+            Set-Content -Path "$folder/probe.qmd" -Value $lines -Encoding utf8
+            "probe.qmd written to $folder" | Add-Content -Encoding utf8 "$root/probe-note.txt"
+          }
+          Get-Content "$root/probe-note.txt"
+          exit 0
+
+      - uses: quarto-dev/quarto-actions/setup@v2
+        if: always()
+
+      - name: Batch-render both extracted zips
+        if: always()
+        timeout-minutes: 25
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $root = $env:GITHUB_WORKSPACE
+          $log = "$root/render-check.txt"
+          "render check - $(Get-Date -Format o)" | Set-Content -Encoding utf8 $log
+          foreach ($stem in @("homework-comparing-estimators", "homework-random-variables-and-moments")) {
+            $dir = "$root/extract/$stem-handout/$stem"
+            Push-Location $dir
+            "=== render $stem ===" | Add-Content $log
+            (quarto render "$stem.qmd" 2>&1 | Select-Object -Last 10 | Out-String) | Add-Content $log
+            "render exit: $LASTEXITCODE" | Add-Content $log
+            $html = "$dir/$stem.html"
+            "html exists: $(Test-Path $html)" | Add-Content $log
+            if (Test-Path $html) {
+              $content = Get-Content $html -Raw
+              "newcommand: $(([regex]::Matches($content, 'newcommand')).Count)" | Add-Content $log
+              "DeclareMathOperator: $(([regex]::Matches($content, 'DeclareMathOperator')).Count)" | Add-Content $log
+              Copy-Item $html "$root/$stem-rendered.html" -Force
+            }
+            Pop-Location
+          }
+          Get-Content $log
+          exit 0
+
+      - name: Launch Positron on the extracted HW5 folder
+        if: always()
+        timeout-minutes: 10
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $root = $env:GITHUB_WORKSPACE
+          $log = "$root/positron-run.txt"
+          "launch - $(Get-Date -Format o)" | Set-Content -Encoding utf8 $log
+          $exe = $env:POSITRON_EXE
+          "exe: $exe" | Add-Content $log
+          $folder = "$root/extract/homework-comparing-estimators-handout/homework-comparing-estimators"
+          "folder exists: $(Test-Path $folder)" | Add-Content $log
+          $iso = "$root/positron-iso"
+          New-Item -ItemType Directory -Force "$iso/user", "$iso/ext", "$iso/shared" | Out-Null
+          $argList = @(
+            "--user-data-dir=$iso\user", "--extensions-dir=$iso\ext", "--shared-data-dir=$iso\shared",
+            "--remote-debugging-port=9222", "--no-sandbox", "--new-window", "--disable-workspace-trust", $folder
+          )
+          $proc = Start-Process -FilePath $exe -ArgumentList $argList -PassThru
+          "launched pid $($proc.Id)" | Add-Content $log
+          $reachable = $false
+          for ($i = 1; $i -le 90; $i++) {
+            Start-Sleep -Seconds 2
+            try {
+              $v = Invoke-RestMethod -Uri "http://127.0.0.1:9222/json/version" -TimeoutSec 3
+              "CDP answered after $($i * 2)s: $($v | ConvertTo-Json -Compress)" | Add-Content $log
+              $reachable = $true
+              break
+            } catch { }
+            if ($proc.HasExited) {
+              "positron process exited after $($i * 2)s, code $($proc.ExitCode)" | Add-Content $log
+              break
+            }
+          }
+          if (-not $reachable) { "CDP never answered within the bound" | Add-Content $log }
+          "positron-family processes:" | Add-Content $log
+          ((Get-Process | Where-Object { $_.ProcessName -match 'positron' } | Select-Object Id, ProcessName, SessionId, WorkingSet | Format-Table | Out-String).Trim()) | Add-Content $log
+          Get-Content $log
+          exit 0
+
+      - name: Phase A - run the HW5 handout in the real IDE
+        if: always()
+        timeout-minutes: 22
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $root = $env:GITHUB_WORKSPACE
+          $d = "$root/positron-drive.mjs"
+          $log = "$root/phaseA-hw5.txt"
+          "phase A - $(Get-Date -Format o)" | Set-Content -Encoding utf8 $log
+          $steps = @(
+            @('open', 'homework-comparing-estimators.qmd'),
+            @('waitconsole', 'R 4.6.1 started', '300'),
+            @('click', '[aria-label="Run All"]'),
+            @('sleep', '240'),
+            @('console'),
+            @('screenshot', 'A-hw5-runall-240s.png'),
+            @('sleep', '120'),
+            @('console'),
+            @('screenshot', 'A-hw5-runall-360s.png'),
+            @('open', 'probe.qmd'),
+            @('click', '[aria-label="Run All"]'),
+            @('sleep', '90'),
+            @('console'),
+            @('screenshot', 'A-hw5-probe.png')
+          )
+          foreach ($s in $steps) {
+            "=== drive $($s -join ' ') ===" | Add-Content $log
+            (node $d 9222 @s 2>&1) | Add-Content $log
+            "exit: $LASTEXITCODE" | Add-Content $log
+            Start-Sleep -Seconds 4
+          }
+          Get-Content $log
+          exit 0
+
+      - name: Phase B - run the HW4 handout in the real IDE
+        if: always()
+        timeout-minutes: 24
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $root = $env:GITHUB_WORKSPACE
+          $log = "$root/phaseB-hw4.txt"
+          "phase B - $(Get-Date -Format o)" | Set-Content -Encoding utf8 $log
+          Get-Process | Where-Object { $_.ProcessName -match 'positron' } | ForEach-Object { try { Stop-Process -Id $_.Id -Force } catch { } }
+          Start-Sleep -Seconds 10
+          $exe = $env:POSITRON_EXE
+          $folder = "$root/extract/homework-random-variables-and-moments-handout/homework-random-variables-and-moments"
+          $iso = "$root/positron-iso2"
+          New-Item -ItemType Directory -Force "$iso/user", "$iso/ext", "$iso/shared" | Out-Null
+          $argList = @(
+            "--user-data-dir=$iso\user", "--extensions-dir=$iso\ext", "--shared-data-dir=$iso\shared",
+            "--remote-debugging-port=9222", "--no-sandbox", "--new-window", "--disable-workspace-trust", $folder
+          )
+          $proc = Start-Process -FilePath $exe -ArgumentList $argList -PassThru
+          "relaunched pid $($proc.Id) on $folder" | Add-Content $log
+          $reachable = $false
+          for ($i = 1; $i -le 90; $i++) {
+            Start-Sleep -Seconds 2
+            try {
+              $v = Invoke-RestMethod -Uri "http://127.0.0.1:9222/json/version" -TimeoutSec 3
+              "CDP answered after $($i * 2)s" | Add-Content $log
+              $reachable = $true
+              break
+            } catch { }
+            if ($proc.HasExited) {
+              "positron process exited after $($i * 2)s, code $($proc.ExitCode)" | Add-Content $log
+              break
+            }
+          }
+          if (-not $reachable) { "CDP never answered within the bound" | Add-Content $log }
+          $d = "$root/positron-drive.mjs"
+          $steps = @(
+            @('open', 'homework-random-variables-and-moments.qmd'),
+            @('waitconsole', 'R 4.6.1 started', '300'),
+            @('click', '[aria-label="Run All"]'),
+            @('sleep', '300'),
+            @('console'),
+            @('screenshot', 'B-hw4-runall-300s.png'),
+            @('sleep', '180'),
+            @('console'),
+            @('screenshot', 'B-hw4-runall-480s.png'),
+            @('open', 'probe.qmd'),
+            @('click', '[aria-label="Run All"]'),
+            @('sleep', '120'),
+            @('console'),
+            @('screenshot', 'B-hw4-probe.png')
+          )
+          foreach ($s in $steps) {
+            "=== drive $($s -join ' ') ===" | Add-Content $log
+            (node $d 9222 @s 2>&1) | Add-Content $log
+            "exit: $LASTEXITCODE" | Add-Content $log
+            Start-Sleep -Seconds 4
+          }
+          "kernel candidates:" | Add-Content $log
+          ((Get-Process ark, kallichore, kcserver, Rterm -ErrorAction SilentlyContinue | Select-Object Id, ProcessName, SessionId | Format-Table | Out-String).Trim()) | Add-Content $log
+          Get-Content $log
+          exit 0
+
+      - name: Collect Positron logs
+        if: always()
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $root = $env:GITHUB_WORKSPACE
+          $dest = "$root/positron-logs"
+          New-Item -ItemType Directory -Force $dest | Out-Null
+          foreach ($candidate in @("$env:APPDATA\Positron", "$env:USERPROFILE\.positron", "$root/positron-iso/user/logs", "$root/positron-iso2/user/logs")) {
+            if (Test-Path $candidate) {
+              "copying $candidate" | Out-File -Append -Encoding utf8 "$root/log-collection.txt"
+              Copy-Item -Recurse -Force $candidate "$dest" -ErrorAction SilentlyContinue
+            } else {
+              "absent: $candidate" | Out-File -Append -Encoding utf8 "$root/log-collection.txt"
+            }
+          }
+          Get-Content "$root/log-collection.txt"
+          exit 0
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ziplib-check-evidence
+          path: |
+            session-facts.txt
+            positron-install.txt
+            fixed-build.txt
+            extract-tree.txt
+            probe-note.txt
+            render-check.txt
+            positron-run.txt
+            phaseA-hw5.txt
+            phaseB-hw4.txt
+            log-collection.txt
+            *-rendered.html
+            *.png
+            positron-logs
