@@ -204,13 +204,17 @@ jobs:
           "session start - $(Get-Date -Format o)" | Set-Content -Encoding utf8 $log
           $attempts = @(
             @('open', 'homework-comparing-estimators.qmd'),
-            @('waitconsole', 'R 4.6.1 started', '90'),
-            @('console'),
+            @('waitconsole', 'R 4.6.1 started', '150'),
+            @('clicktext', 'Start Session'),
+            @('waitconsole', 'R 4.6.1 started', '150'),
+            @('inputstate'),
             @('r', 'cat("ZZ", getwd(), exists("with_seed"), "\n")'),
+            @('waitconsole', 'ZZ', '45'),
             @('console'),
             @('click', '[aria-label="Run All"]'),
+            @('sleep', '180'),
             @('console'),
-            @('console'),
+            @('sleep', '120'),
             @('console')
           )
           foreach ($s in $attempts) {
