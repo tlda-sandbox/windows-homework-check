@@ -20,6 +20,7 @@ on:
 jobs:
   positron:
     runs-on: windows-latest
+    timeout-minutes: 40
     defaults:
       run:
         shell: pwsh
@@ -48,8 +49,10 @@ jobs:
 
       - name: Download and install Positron
         if: always()
+        timeout-minutes: 15
         run: |
           $ErrorActionPreference = 'Continue'
+          $ProgressPreference = 'SilentlyContinue'
           $root = $env:GITHUB_WORKSPACE
           $log = "$root/positron-install.txt"
           $url = "https://cdn.posit.co/positron/releases/win/x86_64/Positron-2026.10.0-297-UserSetup-x64.exe"
@@ -57,8 +60,13 @@ jobs:
           "downloading $url" | Set-Content -Encoding utf8 $log
           Invoke-WebRequest -Uri $url -OutFile $exe
           "downloaded bytes: $((Get-Item $exe).Length)" | Add-Content $log
-          $proc = Start-Process -FilePath $exe -ArgumentList '/S' -Wait -PassThru
-          "installer exit code: $($proc.ExitCode)" | Add-Content $log
+          $proc = Start-Process -FilePath $exe -ArgumentList '/S' -PassThru
+          if (-not $proc.WaitForExit(300000)) {
+            "installer still running after 5 min - killing it and falling through to extraction" | Add-Content $log
+            try { Stop-Process -Id $proc.Id -Force } catch { }
+          } else {
+            "installer exit code: $($proc.ExitCode)" | Add-Content $log
+          }
           $found = @("$env:LOCALAPPDATA\Programs\Positron\Positron.exe", "$env:ProgramFiles\Positron\Positron.exe") | Where-Object { Test-Path $_ }
           if (-not $found) {
             "no installed exe found; extracting the installer with 7z" | Add-Content $log
@@ -88,6 +96,7 @@ jobs:
 
       - name: Launch Positron on the extracted HW5 folder
         if: always()
+        timeout-minutes: 10
         run: |
           $ErrorActionPreference = 'Continue'
           $root = $env:GITHUB_WORKSPACE
