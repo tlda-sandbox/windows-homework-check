@@ -143,14 +143,21 @@ jobs:
           $ErrorActionPreference = 'Continue'
           $folder = "$env:GITHUB_WORKSPACE/extract/homework-random-variables-and-moments-handout/homework-random-variables-and-moments"
           $lines = @(
+            '---',
+            'title: probe',
+            'format: html',
+            '---',
+            '',
+            '```{r}',
             'cat("PROBE getwd:", getwd(), "\n")',
             'cat("PROBE with_seed exists:", exists("with_seed"), "\n")',
-            'cat("PROBE bind_rows exists:", exists("bind_rows"), "\n")',
+            'cat("PROBE means.call.table exists:", exists("means.call.table"), "\n")',
             'cat("PROBE with_seed call:", "\n")',
-            'print(try(with_seed(1)))'
+            'print(try(with_seed(1)))',
+            '```'
           )
-          Set-Content -Path "$folder/probe.R" -Value $lines -Encoding utf8
-          "probe.R written to $folder" | Tee-Object "$env:GITHUB_WORKSPACE/probe-note.txt"
+          Set-Content -Path "$folder/probe.qmd" -Value $lines -Encoding utf8
+          "probe.qmd written to $folder" | Tee-Object "$env:GITHUB_WORKSPACE/probe-note.txt"
           exit 0
 
       - name: Launch Positron on the extracted HW5 folder
@@ -231,9 +238,9 @@ jobs:
             @('open', 'homework-random-variables-and-moments.qmd'),
             @('waitconsole', 'R 4.6.1 started', '300'),
             @('console'),
-            @('open', 'probe.R'),
+            @('open', 'probe.qmd'),
             @('click', '[aria-label="Run All"]'),
-            @('sleep', '30'),
+            @('sleep', '45'),
             @('console'),
             @('screenshot', 'probe-run.png'),
             @('open', 'homework-random-variables-and-moments.qmd'),
