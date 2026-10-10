@@ -55,8 +55,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Continue'
           Rscript -e "install.packages(c('tidyverse', 'gt', 'htmltools', 'kableExtra', 'knitr', 'rmarkdown', 'scales'), repos = 'https://cloud.r-project.org')" *>&1 | Select-Object -Last 3
-          Rscript -e "cat('tidyverse present:', requireNamespace('tidyverse', quietly = TRUE), '
-')"
+          Rscript -e "cat('tidyverse present:', requireNamespace('tidyverse', quietly = TRUE), sep = ' ')"
           exit 0
 
       - name: Download and install Positron
