@@ -66,27 +66,47 @@ jobs:
           "7z: $sevenZip" | Add-Content $log
           $found = @()
           if ($sevenZip) {
-            # Portable route: the NSIS installer wraps the app in an inner app-64.7z,
-            # so it takes two extractions. No installation, no elevation, no UI.
+            # 1. What IS this installer? Log the archive listing (format + contents).
+            "--- 7z listing (first 60 lines) ---" | Add-Content $log
+            (& $sevenZip l $exe 2>&1 | Select-Object -First 60) | Add-Content $log
+            "--- extraction ---" | Add-Content $log
             $stage1 = "$root/positron-stage1"
             $stage2 = "$root/positron-app"
-            & $sevenZip x $exe "-o$stage1" -y | Out-Null
-            $inner = Get-ChildItem -Path $stage1 -Recurse -Filter 'app-64.7z' -ErrorAction SilentlyContinue | Select-Object -First 1
-            "inner archive: $($inner.FullName)" | Add-Content $log
-            if ($inner) { & $sevenZip x $inner.FullName "-o$stage2" -y | Out-Null }
-            $found = @(Get-ChildItem -Path $stage2 -Recurse -Filter Positron.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName)
+            (& $sevenZip x $exe "-o$stage1" -y 2>&1 | Select-Object -Last 5) | Add-Content $log
+            "stage1 top-level:" | Add-Content $log
+            (Get-ChildItem $stage1 -ErrorAction SilentlyContinue | Select-Object -First 20 -ExpandProperty Name) | Add-Content $log
+            # 2. Any nested archives (NSIS app-64.7z or similar) get one more extraction.
+            $inners = @(Get-ChildItem -Path $stage1 -Recurse -Include '*.7z', '*.zip' -ErrorAction SilentlyContinue | Select-Object -First 5)
+            foreach ($inner in $inners) {
+              "inner archive: $($inner.FullName)" | Add-Content $log
+              & $sevenZip x $inner.FullName "-o$stage2" -y | Out-Null
+            }
+            # 3. Search every stage for the exe.
+            $found = @(Get-ChildItem -Path $stage1, $stage2 -Recurse -Filter 'Positron.exe' -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName)
           }
           if (-not $found) {
-            "portable extraction found nothing; trying the silent installer (bounded)" | Add-Content $log
+            "no exe from extraction; trying NSIS silent flags (bounded)" | Add-Content $log
             $proc = Start-Process -FilePath $exe -ArgumentList '/S' -PassThru
             if (-not $proc.WaitForExit(300000)) {
-              "silent installer still running after 5 min (it needs a UI/elevation this context does not provide) - killing it" | Add-Content $log
+              "NSIS silent run still alive after 5 min - killing" | Add-Content $log
               try { Stop-Process -Id $proc.Id -Force } catch { }
             } else {
               "installer exit code: $($proc.ExitCode)" | Add-Content $log
             }
             $found = @("$env:LOCALAPPDATA\Programs\Positron\Positron.exe", "$env:ProgramFiles\Positron\Positron.exe") | Where-Object { Test-Path $_ }
           }
+          if (-not $found) {
+            "still nothing; trying Inno Setup silent flags (bounded, current-user)" | Add-Content $log
+            $proc = Start-Process -FilePath $exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', '/CURRENTUSER' -PassThru
+            if (-not $proc.WaitForExit(300000)) {
+              "Inno silent run still alive after 5 min - killing" | Add-Content $log
+              try { Stop-Process -Id $proc.Id -Force } catch { }
+            } else {
+              "installer exit code: $($proc.ExitCode)" | Add-Content $log
+            }
+            $found = @("$env:LOCALAPPDATA\Programs\Positron\Positron.exe", "$env:ProgramFiles\Positron\Positron.exe") | Where-Object { Test-Path $_ }
+          }
+          Get-Process | Where-Object { $_.ProcessName -match 'Positron-setup' } | ForEach-Object { try { Stop-Process -Id $_.Id -Force } catch { } }
           "positron exe: $($found -join ', ')" | Add-Content $log
           if (-not $found) { "POSITRON EXE MISSING - the launch step cannot proceed" | Add-Content $log }
           "POSITRON_EXE=$($found | Select-Object -First 1)" | Add-Content -Path $env:GITHUB_ENV -Encoding utf8
