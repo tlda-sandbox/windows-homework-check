@@ -160,6 +160,22 @@ jobs:
           "probe.qmd written to $folder" | Tee-Object "$env:GITHUB_WORKSPACE/probe-note.txt"
           exit 0
 
+      - name: Swap the include to the style file
+        if: always()
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $qmd = "$env:GITHUB_WORKSPACE/extract/homework-comparing-estimators-handout/homework-comparing-estimators/homework-comparing-estimators.qmd"
+          $t = Get-Content $qmd -Raw
+          $old = '{{< include shared/shared-code.qmd >}}'
+          $new = '{{< include shared/shared-style.qmd >}}'
+          if ($t.Contains($old)) {
+            Set-Content -Path $qmd -Value ($t.Replace($old, $new)) -Encoding utf8
+            "include swapped to shared-style.qmd" | Tee-Object "$env:GITHUB_WORKSPACE/swap-note.txt"
+          } else {
+            "OLD INCLUDE NOT FOUND" | Tee-Object "$env:GITHUB_WORKSPACE/swap-note.txt"
+          }
+          exit 0
+
       - name: Build the class library in the extracted HW5 folder
         if: always()
         timeout-minutes: 10
@@ -195,6 +211,30 @@ jobs:
           "inserted the source chunk after front-matter close at line $close" | Tee-Object "$root/source-chunk-note.txt"
           Get-Content $qmd | Select-Object -First 26 | Add-Content "$root/source-chunk-note.txt"
           Get-Content "$root/source-chunk-note.txt"
+          exit 0
+
+      - uses: quarto-dev/quarto-actions/setup@v2
+        if: always()
+
+      - name: Render the doctored copy and count the macros
+        if: always()
+        timeout-minutes: 15
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $root = $env:GITHUB_WORKSPACE
+          $dir = "$root/extract/homework-comparing-estimators-handout/homework-comparing-estimators"
+          Push-Location $dir
+          (quarto render homework-comparing-estimators.qmd 2>&1 | Select-Object -Last 12 | Out-String) | Tee-Object "$root/render-check.txt"
+          $html = "$dir/homework-comparing-estimators.html"
+          "html exists: $(Test-Path $html)" | Add-Content "$root/render-check.txt"
+          if (Test-Path $html) {
+            $content = Get-Content $html -Raw
+            "newcommand: $(([regex]::Matches($content, 'newcommand')).Count)" | Add-Content "$root/render-check.txt"
+            "DeclareMathOperator: $(([regex]::Matches($content, 'DeclareMathOperator')).Count)" | Add-Content "$root/render-check.txt"
+            Copy-Item $html "$root/hw5-rendered.html" -Force
+          }
+          Pop-Location
+          Get-Content "$root/render-check.txt"
           exit 0
 
       - name: Launch Positron on the extracted HW5 folder
@@ -329,5 +369,8 @@ jobs:
             log-collection.txt
             make-library-run.txt
             source-chunk-note.txt
+            swap-note.txt
+            render-check.txt
+            hw5-rendered.html
             *.png
             positron-logs
