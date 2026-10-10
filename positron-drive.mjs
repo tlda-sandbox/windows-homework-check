@@ -128,6 +128,19 @@ switch (action) {
     console.log(`screenshot written: ${target}`)
     break
   }
+  case 'scrollconsole': {
+    const delta = Number(args[0]) || -400
+    const count = Number(args[1]) || 3
+    const rect = JSON.parse(await ev(`(()=>{const c=document.getElementById('workbench.panel.positronConsole'); if(!c) return JSON.stringify({found:false}); const b=c.getBoundingClientRect(); return JSON.stringify({found:true,x:b.x+b.width/2,y:b.y+b.height/2})})()`))
+    if (!rect.found) { console.error('no console panel'); process.exit(10) }
+    await send('Page.bringToFront', {}, sid)
+    for (let i = 0; i < count; i++) {
+      await send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: rect.x, y: rect.y, deltaX: 0, deltaY: delta }, sid)
+      await new Promise(r => setTimeout(r, 300))
+    }
+    console.log(`scrolled console ${count} x ${delta}`)
+    break
+  }
   case 'sleep': {
     const secs = Math.max(1, Number(args[0]) || 10)
     await new Promise(r => setTimeout(r, secs * 1000))
