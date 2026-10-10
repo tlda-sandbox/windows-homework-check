@@ -160,6 +160,23 @@ jobs:
           "probe.qmd written to $folder" | Tee-Object "$env:GITHUB_WORKSPACE/probe-note.txt"
           exit 0
 
+      - name: Build the class library in the extracted HW5 folder
+        if: always()
+        timeout-minutes: 10
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $root = $env:GITHUB_WORKSPACE
+          $folder = "$root/extract/homework-comparing-estimators-handout/homework-comparing-estimators"
+          Copy-Item "$root/make-library.R" "$folder/make-library.R" -Force
+          Push-Location $folder
+          (Rscript make-library.R 2>&1 | Out-String) | Tee-Object "$root/make-library-run.txt"
+          "profile exists: $(Test-Path '.Rprofile')" | Add-Content "$root/make-library-run.txt"
+          "qtm285base/R contents:" | Add-Content "$root/make-library-run.txt"
+          (Get-ChildItem "qtm285base/R" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name) | Add-Content "$root/make-library-run.txt"
+          Pop-Location
+          Get-Content "$root/make-library-run.txt"
+          exit 0
+
       - name: Launch Positron on the extracted HW5 folder
         if: always()
         timeout-minutes: 10
@@ -170,7 +187,7 @@ jobs:
           "launch - $(Get-Date -Format o)" | Set-Content -Encoding utf8 $log
           $exe = $env:POSITRON_EXE
           "exe: $exe" | Add-Content $log
-          $folder = "$root/extract/homework-random-variables-and-moments-handout/homework-random-variables-and-moments"
+          $folder = "$root/extract/homework-comparing-estimators-handout/homework-comparing-estimators"
           "folder exists: $(Test-Path $folder)" | Add-Content $log
           $iso = "$root/positron-iso"
           New-Item -ItemType Directory -Force "$iso/user", "$iso/ext", "$iso/shared" | Out-Null
@@ -235,19 +252,16 @@ jobs:
           $log = "$root/session-start.txt"
           "session start - $(Get-Date -Format o)" | Set-Content -Encoding utf8 $log
           $attempts = @(
-            @('open', 'homework-random-variables-and-moments.qmd'),
+            @('open', 'homework-comparing-estimators.qmd'),
             @('waitconsole', 'R 4.6.1 started', '300'),
             @('console'),
-            @('open', 'probe.qmd'),
-            @('click', '[aria-label="Run All"]'),
-            @('sleep', '45'),
-            @('console'),
-            @('screenshot', 'probe-run.png'),
-            @('open', 'homework-random-variables-and-moments.qmd'),
             @('click', '[aria-label="Run All"]'),
             @('sleep', '240'),
             @('console'),
-            @('screenshot', 'hw4-runall.png')
+            @('screenshot', 'hw5-runall-library-240s.png'),
+            @('sleep', '120'),
+            @('console'),
+            @('screenshot', 'hw5-runall-library-360s.png')
           )
           foreach ($s in $attempts) {
             "=== drive $($s -join ' ') ===" | Add-Content $log
@@ -294,5 +308,6 @@ jobs:
             session-start.txt
             extract-tree.txt
             log-collection.txt
+            make-library-run.txt
             *.png
             positron-logs
