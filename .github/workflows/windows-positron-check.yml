@@ -142,14 +142,14 @@ jobs:
         run: |
           $ErrorActionPreference = 'Continue'
           $folder = "$env:GITHUB_WORKSPACE/extract/homework-random-variables-and-moments-handout/homework-random-variables-and-moments"
-          $probe = @'
-          cat("PROBE getwd:", getwd(), "\n")
-          cat("PROBE with_seed exists:", exists("with_seed"), "\n")
-          cat("PROBE bind_rows exists:", exists("bind_rows"), "\n")
-          cat("PROBE with_seed call:", "\n")
-          print(try(with_seed(1)))
-          '@
-          Set-Content -Path "$folder/probe.R" -Value $probe -Encoding utf8
+          $lines = @(
+            'cat("PROBE getwd:", getwd(), "\n")',
+            'cat("PROBE with_seed exists:", exists("with_seed"), "\n")',
+            'cat("PROBE bind_rows exists:", exists("bind_rows"), "\n")',
+            'cat("PROBE with_seed call:", "\n")',
+            'print(try(with_seed(1)))'
+          )
+          Set-Content -Path "$folder/probe.R" -Value $lines -Encoding utf8
           "probe.R written to $folder" | Tee-Object "$env:GITHUB_WORKSPACE/probe-note.txt"
           exit 0
 
