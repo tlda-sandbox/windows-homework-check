@@ -65,10 +65,17 @@ jobs:
           (& Rscript -e "cat(R.version.string)") 2>&1 | Add-Content $log
           (& quarto --version) 2>&1 | Add-Content $log
           $fail = 0
-          $projects = Get-ChildItem "$root/extract" -Recurse -Directory | Where-Object { Test-Path (Join-Path $_.FullName "_quarto.yml") }
-          if (-not $projects) { "NO PROJECTS FOUND - the extraction or the _quarto.yml marker is wrong" | Add-Content $log; Get-Content $log; exit 1 }
-          foreach ($p in $projects) {
-            $name = $p.FullName.Substring($root.Length + 1)
+          # Drive off the handout .qmd, not off _quarto.yml: homework-setup's zip
+          # ships no project file, and a project-only scan skips it silently
+          # while the job still reports success.
+          $handouts = Get-ChildItem "$root/extract" -Recurse -Filter '*.qmd' | Where-Object { $_.Name -notlike '*shared*' -and $_.FullName -notlike '*.qmd.support*' }
+          if (-not $handouts) { "NO HANDOUT .qmd FOUND - the extraction is wrong" | Add-Content $log; Get-Content $log; exit 1 }
+          "handout .qmd files found: $($handouts.Count)" | Add-Content $log
+          foreach ($h in $handouts) {
+            $p = $h.Directory
+            $name = $h.FullName.Substring($root.Length + 1)
+            $hasProject = Test-Path (Join-Path $p.FullName "_quarto.yml")
+            "--- quarto project file present: $hasProject ---" | Add-Content $log
             "=== PROJECT $name ===" | Add-Content $log
             Push-Location $p.FullName
             "--- _quarto.yml ---" | Add-Content $log
@@ -80,7 +87,7 @@ jobs:
             "--- direct with_seed probe (not a student path; isolates seed over a read) ---" | Add-Content $log
             (& Rscript -e "with_seed <- function(x, seed = 1) { set.seed(seed); force(x) }; csv <- head(list.files('data', pattern = '[.]csv$'), 1); if (!is.na(csv)) { d <- with_seed(read.csv(file.path('data', csv))); cat('with_seed(read.csv()) rows:', nrow(d), '\n') }") 2>&1 | Add-Content $log
             "--- quarto render ---" | Add-Content $log
-            (& quarto render) 2>&1 | Add-Content $log
+            (& quarto render $h.Name) 2>&1 | Add-Content $log
             "--- exit code: $LASTEXITCODE ($name) ---" | Add-Content $log
             if ($LASTEXITCODE -ne 0) { $fail = 1; "RENDER FAILED: $name" | Add-Content $log }
             Pop-Location
