@@ -31,7 +31,7 @@ jobs:
         run: |
           $base = "https://qtm285.github.io/static/book/homework/handouts"
           New-Item -ItemType Directory -Force "$env:GITHUB_WORKSPACE/work" | Out-Null
-          foreach ($hw in @("homework-comparing-estimators-handout.zip", "homework-random-variables-and-moments-handout.zip")) {
+          foreach ($hw in @("homework-setup-handout.zip", "homework-descriptive-handout.zip", "homework-calibration-handout.zip", "homework-calibration-binary-handout.zip", "homework-bootstrap-handout.zip", "homework-random-variables-and-moments-handout.zip", "homework-comparing-estimators-handout.zip")) {
             Invoke-WebRequest -Uri "$base/$hw" -OutFile "$env:GITHUB_WORKSPACE/work/$hw"
           }
           Get-ChildItem "$env:GITHUB_WORKSPACE/work" | Select-Object Name, Length | Format-Table
