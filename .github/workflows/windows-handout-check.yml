@@ -65,36 +65,31 @@ jobs:
           (& Rscript -e "cat(R.version.string)") 2>&1 | Add-Content $log
           (& quarto --version) 2>&1 | Add-Content $log
           $fail = 0
-          # Drive off the handout .qmd, not off _quarto.yml: homework-setup's zip
-          # ships no project file, and a project-only scan skips it silently
-          # while the job still reports success.
-          $handouts = Get-ChildItem "$root/extract" -Recurse -Filter '*.qmd' | Where-Object { $_.Name -notlike '*shared*' -and $_.FullName -notlike '*.qmd.support*' }
-          if (-not $handouts) { "NO HANDOUT .qmd FOUND - the extraction is wrong" | Add-Content $log; Get-Content $log; exit 1 }
-          "handout .qmd files found: $($handouts.Count)" | Add-Content $log
-          foreach ($h in $handouts) {
-            $p = $h.Directory
-            $name = $h.FullName.Substring($root.Length + 1)
-            $hasProject = Test-Path (Join-Path $p.FullName "_quarto.yml")
-            "--- quarto project file present: $hasProject ---" | Add-Content $log
-            "=== PROJECT $name ===" | Add-Content $log
-            Push-Location $p.FullName
-            "--- _quarto.yml ---" | Add-Content $log
-            Get-Content "_quarto.yml" | Add-Content $log
-            "--- folder listing ---" | Add-Content $log
+          $ok = 0
+          # Deterministic: for each zip, render exactly the .qmd named after it.
+          # Not a recursive .qmd sweep -- that renders includes like ga-turnout.qmd
+          # standalone, which fails by design, and it silently missed
+          # homework-setup whose zip ships no _quarto.yml.
+          foreach ($zip in Get-ChildItem "$root/work/*.zip")  {
+            $base = $zip.BaseName -replace '-handout$', ''
+            $target = Get-ChildItem "$root/extract/$($zip.BaseName)" -Recurse -Filter "$base.qmd" | Select-Object -First 1
+            if (-not $target) { "MISSING HANDOUT QMD: expected $base.qmd inside $($zip.Name)" | Add-Content $log; $fail = 1; continue }
+            $dir = $target.Directory
+            $hasProject = Test-Path (Join-Path $dir.FullName "_quarto.yml")
+            "=== HANDOUT $base  (project file: $hasProject) ===" | Add-Content $log
+            Push-Location $dir.FullName
             (Get-ChildItem -Name) | Add-Content $log
-            "--- R working directory and data resolution ---" | Add-Content $log
-            (& Rscript -e "cat('getwd:', getwd(), '\n'); cat('data/ entries:', length(list.files('data')), '\n'); csv <- head(list.files('data', pattern = '[.]csv$'), 1); cat('first csv:', csv, '\n'); if (!is.na(csv)) { d <- read.csv(file.path('data', csv)); cat('read.csv rows:', nrow(d), '\n') }") 2>&1 | Add-Content $log
-            "--- direct with_seed probe (not a student path; isolates seed over a read) ---" | Add-Content $log
-            (& Rscript -e "with_seed <- function(x, seed = 1) { set.seed(seed); force(x) }; csv <- head(list.files('data', pattern = '[.]csv$'), 1); if (!is.na(csv)) { d <- with_seed(read.csv(file.path('data', csv))); cat('with_seed(read.csv()) rows:', nrow(d), '\n') }") 2>&1 | Add-Content $log
-            "--- quarto render ---" | Add-Content $log
-            (& quarto render $h.Name) 2>&1 | Add-Content $log
-            "--- exit code: $LASTEXITCODE ($name) ---" | Add-Content $log
-            if ($LASTEXITCODE -ne 0) { $fail = 1; "RENDER FAILED: $name" | Add-Content $log }
+            "--- quarto render $($target.Name) ---" | Add-Content $log
+            (& quarto render $target.Name) 2>&1 | Add-Content $log
+            $code = $LASTEXITCODE
+            "--- exit code: $code ($base) ---" | Add-Content $log
+            if ($code -ne 0) { $fail = 1; "RENDER FAILED: $base" | Add-Content $log } else { $ok++ }
             Pop-Location
           }
+          "handouts rendered ok: $ok" | Add-Content $log
           "===== render-log.txt ====="
           Get-Content $log
-          Set-Content -Encoding utf8 "$root/render-status.txt" "fail=$fail"
+          Set-Content -Encoding utf8 "$root/render-status.txt" "fail=$fail ok=$ok"
           exit $fail
 
       - name: Upload logs and tree
