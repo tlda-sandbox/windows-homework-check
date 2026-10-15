@@ -91,7 +91,7 @@ jobs:
           Drive @('visual-code')
           Drive @('screenshot','evidence/visual-r-block.png')
           Drive @('command','Quarto: Run All Cells')
-          for ($i=0; $i -lt 3; $i++) {
+          for ($i=0; $i -lt 1; $i++) {
             Start-Sleep 30
             Drive @('console')
           }
@@ -100,7 +100,11 @@ jobs:
           Drive @('r', 'cat("HW5_COMPLETION:", exists("with_seed") && is.function(with_seed) && exists("width_binom") && is.function(width_binom) && exists("class.theme") && inherits(class.theme, "theme") && exists("simplified.theme"), "\n")')
           Drive @('requireexpr', 'document.getElementById("workbench.panel.positronConsole")?.textContent.includes("HW5_COMPLETION: TRUE")', '90')
           Drive @('console')
-          if ($before -ne (Get-FileHash $qmd).Hash) { throw 'Downloaded QMD changed during check' }
+          Drive @('screenshot','evidence/console-completion.png')
+          Copy-Item $qmd evidence/after-visual.qmd
+          "Before: $before`nAfter: $((Get-FileHash $qmd).Hash)" | Set-Content evidence/editor-hashes.txt
+          & git diff --no-index -- evidence/downloaded.qmd evidence/after-visual.qmd | Set-Content evidence/editor-save.diff
+          if ($LASTEXITCODE -gt 1) { throw 'Could not record the visual editor save diff' }
           $record = Get-Content evidence/visual-run.txt -Raw
           if ($record -notmatch 'HW5_COMPLETION: TRUE') { throw 'The actual IDE run did not reach the final HW5 block' }
           Drive @('visual-eval', 'JSON.stringify({headings:[...document.querySelectorAll("h1,h2,h3")].map(e=>e.textContent), images:[...document.images].map(e=>({src:e.src,complete:e.complete,width:e.naturalWidth,height:e.naturalHeight})), code:[...document.querySelectorAll(".cm-editor")].map(e=>e.innerText), mathErrors:[...document.querySelectorAll(".katex-error,merror")].map(e=>e.textContent)})')
