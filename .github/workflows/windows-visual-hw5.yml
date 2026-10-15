@@ -2,6 +2,12 @@ name: Windows HW5 visual mode
 
 on:
   workflow_dispatch:
+    inputs:
+      site:
+        description: Course publication to download
+        type: choice
+        options: [live, test-live]
+        default: live
 
 jobs:
   visual:
@@ -34,9 +40,12 @@ jobs:
           & "$env:LOCALAPPDATA\Programs\Positron\bin\positron.cmd" --user-data-dir="$pwd/iso/user" --extensions-dir="$pwd/iso/ext" --install-extension quarto.quarto --force
           if ($LASTEXITCODE) { throw 'Quarto extension installation failed' }
       - name: Download HW5 exactly from the live course
+        env:
+          CHECK_SITE: ${{ inputs.site }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $url = 'https://qtm285.github.io/static/book/homework/handouts/homework-comparing-estimators-handout.zip'
+          $prefix = if ($env:CHECK_SITE -eq 'test-live') { 'https://qtm285.github.io/pages-topology-test' } else { 'https://qtm285.github.io' }
+          $url = "$prefix/static/book/homework/handouts/homework-comparing-estimators-handout.zip"
           Invoke-WebRequest $url -OutFile hw5.zip
           "$url`n$((Get-FileHash hw5.zip -Algorithm SHA256).Hash)" | Set-Content evidence/download.txt
           Expand-Archive hw5.zip -DestinationPath extract
