@@ -56,8 +56,20 @@ const pressEnter = async () => {
 }
 
 switch (action) {
+  case 'requireexpr': {
+    const secs = Math.max(1, Number(args.pop()) || 30)
+    const expression = args.join(' ')
+    const deadline = Date.now() + secs * 1000
+    do {
+      if (await ev(expression) === true) { console.log('Required IDE condition observed'); process.exit(0) }
+      await new Promise(r => setTimeout(r, 500))
+    } while (Date.now() < deadline)
+    console.error('Required IDE condition was not observed: ' + expression)
+    process.exit(13)
+  }
   case 'command': {
     const label = args.join(' ')
+    await send('Page.bringToFront', {}, sid)
     await send('Input.dispatchKeyEvent', { type: 'keyDown', modifiers: 10, windowsVirtualKeyCode: 80, key: 'P', code: 'KeyP' }, sid)
     await send('Input.dispatchKeyEvent', { type: 'keyUp', modifiers: 10, windowsVirtualKeyCode: 80, key: 'P', code: 'KeyP' }, sid)
     await new Promise(r => setTimeout(r, 800))
@@ -72,7 +84,7 @@ switch (action) {
       await new Promise(r => setTimeout(r, 500))
     } while (Date.now() < deadline)
     if (!rect || typeof rect !== 'object') { console.error('Required IDE command was not offered: ' + label); process.exit(12) }
-    await clickAt(rect.x, rect.y)
+    await pressEnter()
     console.log('Selected IDE command: ' + label)
     break
   }

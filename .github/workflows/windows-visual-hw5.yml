@@ -78,6 +78,7 @@ jobs:
           Drive @('eval', 'document.body.innerText')
           Drive @('eval', 'JSON.stringify([...document.querySelectorAll("iframe")].map(x=>({title:x.title,src:x.src})))')
           Drive @('screenshot','evidence/visual-before.png')
+          Drive @('requireexpr', 'document.querySelectorAll("iframe").length > 0', '45')
           Drive @('command','Quarto: Run All Cells')
           for ($i=0; $i -lt 8; $i++) {
             Start-Sleep 30
