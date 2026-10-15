@@ -1,0 +1,91 @@
+name: Windows HW5 visual mode
+
+on:
+  workflow_dispatch:
+
+jobs:
+  visual:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: release
+      - uses: quarto-dev/quarto-actions/setup@v2
+      - name: Install course packages
+        run: |
+          Rscript -e "install.packages(c('tidyverse','gt','htmltools','kableExtra','knitr','rmarkdown','scales'), repos='https://cloud.r-project.org'); stopifnot(all(vapply(c('tidyverse','gt','htmltools','kableExtra','knitr','rmarkdown','scales'), requireNamespace, logical(1), quietly=TRUE)))"
+          if ($LASTEXITCODE) { throw 'Course package installation failed' }
+      - name: Install Windows Positron and Quarto extension
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ProgressPreference = 'SilentlyContinue'
+          Invoke-WebRequest 'https://cdn.posit.co/positron/releases/win/x86_64/Positron-2026.10.0-297-UserSetup-x64.exe' -OutFile setup.exe
+          $p = Start-Process ./setup.exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-','/CURRENTUSER' -PassThru
+          if (!$p.WaitForExit(300000) -or $p.ExitCode -ne 0) { throw 'Positron installation failed' }
+          $exe = "$env:LOCALAPPDATA\Programs\Positron\Positron.exe"
+          if (!(Test-Path $exe)) { throw "Positron missing: $exe" }
+          "POSITRON_EXE=$exe" | Add-Content $env:GITHUB_ENV
+          New-Item -ItemType Directory -Force evidence, iso/user, iso/ext, iso/shared | Out-Null
+          & "$env:LOCALAPPDATA\Programs\Positron\bin\positron.cmd" --user-data-dir="$pwd/iso/user" --extensions-dir="$pwd/iso/ext" --install-extension quarto.quarto --force
+          if ($LASTEXITCODE) { throw 'Quarto extension installation failed' }
+      - name: Download HW5 exactly from the live course
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $url = 'https://qtm285.github.io/static/book/homework/handouts/homework-comparing-estimators-handout.zip'
+          Invoke-WebRequest $url -OutFile hw5.zip
+          "$url`n$((Get-FileHash hw5.zip -Algorithm SHA256).Hash)" | Set-Content evidence/download.txt
+          Expand-Archive hw5.zip -DestinationPath extract
+          Get-ChildItem extract -Recurse -File | ForEach-Object { "$($_.FullName) $((Get-FileHash $_.FullName -Algorithm SHA256).Hash)" } | Set-Content evidence/members-before.txt
+          Copy-Item extract/homework-comparing-estimators/homework-comparing-estimators.qmd evidence/downloaded.qmd
+      - name: Vanilla open in visual mode, then run all cells
+        timeout-minutes: 12
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $folder = "$pwd/extract/homework-comparing-estimators"
+          $qmd = "$folder/homework-comparing-estimators.qmd"
+          $before = (Get-FileHash $qmd).Hash
+          $launch = @("--user-data-dir=$pwd/iso/user", "--extensions-dir=$pwd/iso/ext", "--shared-data-dir=$pwd/iso/shared", '--remote-debugging-port=9222', '--new-window', '--disable-workspace-trust', $qmd)
+          Start-Process $env:POSITRON_EXE -ArgumentList $launch
+          $ready = $false
+          for ($i=0; $i -lt 60; $i++) {
+            try { Invoke-RestMethod http://127.0.0.1:9222/json/version | ConvertTo-Json | Set-Content evidence/ide-version.json; $ready=$true; break } catch { Start-Sleep 2 }
+          }
+          if (!$ready) { throw 'Windows Positron did not start' }
+          npm install ws --no-save --silent
+          function Drive([string[]] $a) {
+            $out = & node positron-drive.mjs 9222 @a 2>&1
+            $rc = $LASTEXITCODE
+            $out | Tee-Object -Append evidence/visual-run.txt
+            if ($rc) { throw "IDE driver failed ($rc): $($a -join ' ')" }
+          }
+          Start-Sleep 15
+          Drive @('command','Quarto: Edit in Visual Mode')
+          Start-Sleep 15
+          Drive @('eval', 'document.body.innerText')
+          Drive @('eval', 'JSON.stringify([...document.querySelectorAll("iframe")].map(x=>({title:x.title,src:x.src})))')
+          Drive @('screenshot','evidence/visual-before.png')
+          Drive @('command','Quarto: Run All Cells')
+          for ($i=0; $i -lt 8; $i++) {
+            Start-Sleep 30
+            Drive @('console')
+          }
+          Drive @('screenshot','evidence/visual-after.png')
+          Drive @('r', 'cat("HW5_COMPLETION:", exists("plotdata") && exists("dotplotdata") && exists("dotplotsummaries") && exists("K") && K == 100, "\n")')
+          Drive @('console')
+          if ($before -ne (Get-FileHash $qmd).Hash) { throw 'Downloaded QMD changed during check' }
+          $record = Get-Content evidence/visual-run.txt -Raw
+          if ($record -notmatch 'HW5_COMPLETION: TRUE') { throw 'The actual IDE run did not reach the final HW5 block' }
+      - name: Collect IDE logs
+        if: always()
+        run: |
+          if (Test-Path iso/user/logs) { Copy-Item iso/user/logs evidence/logs -Recurse }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-hw5-visual-evidence
+          path: evidence/

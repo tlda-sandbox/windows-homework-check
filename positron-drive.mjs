@@ -56,6 +56,26 @@ const pressEnter = async () => {
 }
 
 switch (action) {
+  case 'command': {
+    const label = args.join(' ')
+    await send('Input.dispatchKeyEvent', { type: 'keyDown', modifiers: 10, windowsVirtualKeyCode: 80, key: 'P', code: 'KeyP' }, sid)
+    await send('Input.dispatchKeyEvent', { type: 'keyUp', modifiers: 10, windowsVirtualKeyCode: 80, key: 'P', code: 'KeyP' }, sid)
+    await new Promise(r => setTimeout(r, 800))
+    await send('Input.dispatchKeyEvent', { type: 'keyDown', modifiers: 2, windowsVirtualKeyCode: 65, key: 'A', code: 'KeyA' }, sid)
+    await send('Input.dispatchKeyEvent', { type: 'keyUp', modifiers: 2, windowsVirtualKeyCode: 65, key: 'A', code: 'KeyA' }, sid)
+    await send('Input.insertText', { text: '>' + label }, sid)
+    const deadline = Date.now() + 30000
+    let rect
+    do {
+      rect = await ev(`(()=>{const r=[...document.querySelectorAll('.quick-input-widget .monaco-list-row')].find(r=>r.innerText.includes(${JSON.stringify(label)})); if(!r) return null; const b=r.getBoundingClientRect(); return {x:b.x+b.width/2,y:b.y+b.height/2}})()`)
+      if (rect && typeof rect === 'object') break
+      await new Promise(r => setTimeout(r, 500))
+    } while (Date.now() < deadline)
+    if (!rect || typeof rect !== 'object') { console.error('Required IDE command was not offered: ' + label); process.exit(12) }
+    await clickAt(rect.x, rect.y)
+    console.log('Selected IDE command: ' + label)
+    break
+  }
   case 'targets':
     console.log(tg.result.targetInfos.map(t => `${t.type} | ${t.title}`).join('\n')); break
   case 'eval':
