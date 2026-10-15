@@ -56,6 +56,29 @@ const pressEnter = async () => {
 }
 
 switch (action) {
+  case 'visual-eval': {
+    const infos = (await send('Target.getTargets')).result.targetInfos
+    for (const target of infos.filter(t => ['page', 'iframe'].includes(t.type))) {
+      const child = (await send('Target.attachToTarget', { targetId: target.targetId, flatten: true })).result?.sessionId
+      if (!child) continue
+      const tree = await send('Page.getFrameTree', {}, child)
+      const frames = []
+      const walk = node => { if (!node) return; frames.push(node.frame); for (const c of node.childFrames || []) walk(c) }
+      walk(tree.result?.frameTree)
+      for (const frame of frames) {
+        const contextId = (await send('Page.createIsolatedWorld', { frameId: frame.id, worldName: 'hw5-visual-inspection' }, child)).result?.executionContextId
+        if (!contextId) continue
+        const probe = await send('Runtime.evaluate', { contextId, returnByValue: true, expression: "!!document.querySelector('.ProseMirror,.pm-code-editor')" }, child)
+        if (!probe.result?.result?.value) continue
+        const result = await send('Runtime.evaluate', { contextId, returnByValue: true, awaitPromise: true, expression: args.join(' ') }, child)
+        if (result.result?.exceptionDetails) { console.error(JSON.stringify(result.result.exceptionDetails)); process.exit(16) }
+        console.log(JSON.stringify(result.result?.result?.value))
+        process.exit(0)
+      }
+    }
+    console.error('Visual editor DOM not found')
+    process.exit(16)
+  }
   case 'visual-code': {
     const infos = (await send('Target.getTargets')).result.targetInfos
     const inspected = []
@@ -175,8 +198,9 @@ switch (action) {
     const code = args.join(' ')
     await send('Page.bringToFront', {}, sid)
     const rect = JSON.parse(await ev(`(()=>{
-      const scoped=[...document.querySelectorAll('#workbench.panel.positronConsole textarea, .positron-console textarea, .positron-console input')];
-      const t=scoped.find(i=>i.offsetParent)||document.querySelector('textarea.inputarea');
+      const root=document.getElementById('workbench.panel.positronConsole');
+      const scoped=[...root.querySelectorAll('.console-input:not(.hidden) .native-edit-context, .console-input:not(.hidden) textarea.inputarea')];
+      const t=scoped.find(i=>i.offsetParent);
       if(!t) return JSON.stringify({found:false});
       t.focus();
       const b=t.getBoundingClientRect();
@@ -185,7 +209,7 @@ switch (action) {
     console.error(`# console input: ${rect.cls} (${rect.id})`)
     await new Promise(r => setTimeout(r, 500))
     await new Promise(r => setTimeout(r, 400))
-    const focused = await ev(`(()=>{const t=[...document.querySelectorAll('#workbench.panel.positronConsole textarea, .positron-console textarea, .positron-console input')].find(t=>t.offsetParent); if(!t) return false; t.focus(); return document.activeElement===t})()`)
+    const focused = await ev(`(()=>{const root=document.getElementById('workbench.panel.positronConsole'); const t=[...root.querySelectorAll('.console-input:not(.hidden) .native-edit-context, .console-input:not(.hidden) textarea.inputarea')].find(t=>t.offsetParent); if(!t) return false; t.focus(); return document.activeElement===t})()`)
     if (!focused) { console.error('R console input did not receive focus'); process.exit(8) }
     await send('Input.insertText', { text: code }, sid)
     await new Promise(r => setTimeout(r, 600))
