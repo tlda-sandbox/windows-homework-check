@@ -107,14 +107,19 @@ jobs:
           if ($LASTEXITCODE -gt 1) { throw 'Could not record the visual editor save diff' }
           $record = Get-Content evidence/visual-run.txt -Raw
           if ($record -notmatch 'HW5_COMPLETION: TRUE') { throw 'The actual IDE run did not reach the final HW5 block' }
+          Drive @('command','View: Toggle Zen Mode')
           Drive @('visual-eval', 'JSON.stringify({headings:[...document.querySelectorAll("h1,h2,h3")].map(e=>e.textContent), images:[...document.images].map(e=>({src:e.src,complete:e.complete,width:e.naturalWidth,height:e.naturalHeight})), code:[...document.querySelectorAll(".cm-editor")].map(e=>e.innerText), mathErrors:[...document.querySelectorAll(".katex-error,merror")].map(e=>e.textContent)})')
           Drive @('visual-eval', '(async()=>{const e=[...document.querySelectorAll("h1,h2,h3")].find(e=>e.textContent.includes("Review: Prior-Based Estimators")); if(!e) throw Error("Review heading missing"); e.scrollIntoView(); await new Promise(r=>setTimeout(r,1000)); return e.textContent})()')
           Drive @('screenshot','evidence/visual-prior-math.png')
           Drive @('visual-eval', '(async()=>{const e=[...document.images].find(e=>e.src.includes("plot-bias-variance-grid")); if(!e || !e.complete || !e.naturalWidth) throw Error("Given grid image missing"); e.scrollIntoView({block:"center"}); await new Promise(r=>setTimeout(r,1000)); return {src:e.src,width:e.naturalWidth}})()')
           Drive @('screenshot','evidence/visual-given-grid.png')
+          Drive @('visual-eval', '(async()=>{const e=[...document.querySelectorAll("p")].find(e=>e.textContent.startsWith("As the figure shows")); if(!e) throw Error("RMSE introduction missing"); e.scrollIntoView(); await new Promise(r=>setTimeout(r,1000)); return e.textContent})()')
+          Drive @('screenshot','evidence/visual-rmse-math.png')
           Drive @('visual-eval', '(async()=>{const e=[...document.images].find(e=>e.src.includes("plot-convergence-in-probability")); if(!e || !e.complete || !e.naturalWidth) throw Error("Convergence image missing"); e.scrollIntoView({block:"center"}); await new Promise(r=>setTimeout(r,1000)); return {src:e.src,width:e.naturalWidth}})()')
           Drive @('screenshot','evidence/visual-convergence.png')
+          Drive @('visual-code')
           Drive @('command','Quarto: Render Document')
+          Drive @('waitpick','Render HTML','30')
           $html = "$folder/homework-comparing-estimators.html"
           $rendered = $false
           for ($i=0; $i -lt 90; $i++) {
