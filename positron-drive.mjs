@@ -56,6 +56,47 @@ const pressEnter = async () => {
 }
 
 switch (action) {
+  case 'visual-code': {
+    const infos = (await send('Target.getTargets')).result.targetInfos
+    const inspected = []
+    for (const target of infos.filter(t => ['page', 'iframe'].includes(t.type))) {
+      const attached = await send('Target.attachToTarget', { targetId: target.targetId, flatten: true })
+      const child = attached.result?.sessionId
+      if (!child) continue
+      const tree = await send('Page.getFrameTree', {}, child)
+      const frames = []
+      const walk = node => { if (!node) return; frames.push(node.frame); for (const c of node.childFrames || []) walk(c) }
+      walk(tree.result?.frameTree)
+      for (const frame of frames) {
+        const world = await send('Page.createIsolatedWorld', { frameId: frame.id, worldName: 'hw5-dom-check' }, child)
+        const contextId = world.result?.executionContextId
+        if (!contextId) continue
+        const result = await send('Runtime.evaluate', {
+          contextId, returnByValue: true, awaitPromise: true,
+          expression: `(async()=>{
+            const cells=[...document.querySelectorAll('.CodeMirror, .cm-editor, .ace_editor, pre')];
+            const cell=cells.find(e=>(e.innerText||e.textContent||'').includes('library.files'));
+            if(!cell) return {found:false,url:location.href,sample:document.body?.innerText.slice(0,300),classes:[...new Set([...document.querySelectorAll('[contenteditable],textarea')].map(e=>e.className))]};
+            cell.scrollIntoView({block:'center'});
+            await new Promise(r=>setTimeout(r,1000));
+            const input=(cell.closest('.pm-code-editor')||cell).querySelector('textarea,[contenteditable=true]');
+            if(!input) return {found:false,reason:'R block has no editor input',html:cell.outerHTML.slice(0,1500)};
+            input.focus();
+            return {found:true,url:location.href,cell:cell.className,input:input.tagName,text:cell.innerText.slice(0,250)};
+          })()`
+        }, child)
+        const value = result.result?.result?.value
+        inspected.push(value || result.error || result.result?.exceptionDetails)
+        if (value?.found) {
+          await send('Input.dispatchKeyEvent', { type: 'keyDown', windowsVirtualKeyCode: 39, key: 'ArrowRight', code: 'ArrowRight' }, child)
+          await send('Input.dispatchKeyEvent', { type: 'keyUp', windowsVirtualKeyCode: 39, key: 'ArrowRight', code: 'ArrowRight' }, child)
+          await new Promise(r => setTimeout(r, 1000))
+          console.log(JSON.stringify(value)); process.exit(0)
+        }
+      }
+    }
+    console.error(JSON.stringify(inspected)); process.exit(15)
+  }
   case 'requireexpr': {
     const secs = Math.max(1, Number(args.pop()) || 30)
     const expression = args.join(' ')

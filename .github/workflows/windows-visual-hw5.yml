@@ -79,13 +79,16 @@ jobs:
           Drive @('eval', 'JSON.stringify([...document.querySelectorAll("iframe")].map(x=>({title:x.title,src:x.src})))')
           Drive @('screenshot','evidence/visual-before.png')
           Drive @('requireexpr', 'document.querySelectorAll("iframe").length > 0', '45')
+          Drive @('visual-code')
+          Drive @('screenshot','evidence/visual-r-block.png')
           Drive @('command','Quarto: Run All Cells')
-          for ($i=0; $i -lt 8; $i++) {
+          for ($i=0; $i -lt 3; $i++) {
             Start-Sleep 30
             Drive @('console')
           }
           Drive @('screenshot','evidence/visual-after.png')
           Drive @('r', 'cat("HW5_COMPLETION:", exists("plotdata") && exists("dotplotdata") && exists("dotplotsummaries") && exists("K") && K == 100, "\n")')
+          Drive @('requireexpr', 'document.getElementById("workbench.panel.positronConsole")?.textContent.includes("HW5_COMPLETION: TRUE")', '90')
           Drive @('console')
           if ($before -ne (Get-FileHash $qmd).Hash) { throw 'Downloaded QMD changed during check' }
           $record = Get-Content evidence/visual-run.txt -Raw
