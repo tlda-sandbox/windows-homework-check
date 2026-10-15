@@ -8,6 +8,11 @@ on:
         type: choice
         options: [live, test-live]
         default: live
+      open_mode:
+        description: Normal Positron opening action to check
+        type: choice
+        options: [file, folder]
+        default: file
 
 jobs:
   visual:
@@ -53,12 +58,16 @@ jobs:
           Copy-Item extract/homework-comparing-estimators/homework-comparing-estimators.qmd evidence/downloaded.qmd
       - name: Vanilla open in visual mode, then run all cells
         timeout-minutes: 12
+        env:
+          CHECK_OPEN_MODE: ${{ inputs.open_mode }}
         run: |
           $ErrorActionPreference = 'Stop'
           $folder = "$pwd/extract/homework-comparing-estimators"
           $qmd = "$folder/homework-comparing-estimators.qmd"
           $before = (Get-FileHash $qmd).Hash
           $launch = @("--user-data-dir=$pwd/iso/user", "--extensions-dir=$pwd/iso/ext", "--shared-data-dir=$pwd/iso/shared", '--remote-debugging-port=9222', '--new-window', '--disable-workspace-trust', $qmd)
+          if ($env:CHECK_OPEN_MODE -eq 'folder') { $launch += $folder }
+          "Opening mode: $env:CHECK_OPEN_MODE" | Set-Content evidence/open-mode.txt
           Start-Process $env:POSITRON_EXE -ArgumentList $launch
           $ready = $false
           for ($i=0; $i -lt 60; $i++) {
