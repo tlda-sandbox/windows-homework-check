@@ -87,7 +87,7 @@ jobs:
             Drive @('console')
           }
           Drive @('screenshot','evidence/visual-after.png')
-          Drive @('r', 'cat("HW5_COMPLETION:", exists("plotdata") && exists("dotplotdata") && exists("dotplotsummaries") && exists("K") && K == 100, "\n")')
+          Drive @('r', 'cat("HW5_DOC_CONTEXT:", if (exists("document.path")) document.path else "<none>", "\n"); cat("HW5_COMPLETION:", exists("plotdata") && exists("dotplotdata") && exists("dotplotsummaries") && exists("K") && K == 100, "\n")')
           Drive @('requireexpr', 'document.getElementById("workbench.panel.positronConsole")?.textContent.includes("HW5_COMPLETION: TRUE")', '90')
           Drive @('console')
           if ($before -ne (Get-FileHash $qmd).Hash) { throw 'Downloaded QMD changed during check' }
