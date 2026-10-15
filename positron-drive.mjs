@@ -183,9 +183,10 @@ switch (action) {
       return JSON.stringify({found:true,x:b.x+b.width/2,y:b.y+b.height/2,cls:t.className.slice(0,60),id:t.closest('[id]')?.id||''})})()`))
     if (!rect.found) { console.error('no console input found'); process.exit(8) }
     console.error(`# console input: ${rect.cls} (${rect.id})`)
-    await send('Page.bringToFront', {}, sid)
     await new Promise(r => setTimeout(r, 500))
     await new Promise(r => setTimeout(r, 400))
+    const focused = await ev(`(()=>{const t=[...document.querySelectorAll('#workbench.panel.positronConsole textarea, .positron-console textarea, .positron-console input')].find(t=>t.offsetParent); if(!t) return false; t.focus(); return document.activeElement===t})()`)
+    if (!focused) { console.error('R console input did not receive focus'); process.exit(8) }
     await send('Input.insertText', { text: code }, sid)
     await new Promise(r => setTimeout(r, 600))
     await pressEnter()
