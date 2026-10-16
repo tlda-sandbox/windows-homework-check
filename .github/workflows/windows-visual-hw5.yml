@@ -117,11 +117,8 @@ jobs:
           Drive @('screenshot','evidence/visual-rmse-math.png')
           Drive @('visual-eval', '(async()=>{const e=[...document.images].find(e=>e.src.includes("plot-convergence-in-probability")); if(!e || !e.complete || !e.naturalWidth) throw Error("Convergence image missing"); e.scrollIntoView({block:"center"}); await new Promise(r=>setTimeout(r,1000)); return {src:e.src,width:e.naturalWidth}})()')
           Drive @('screenshot','evidence/visual-convergence.png')
-          Drive @('command','View: Toggle Zen Mode')
-          Drive @('visual-code')
-          Drive @('command','Quarto: Render Document')
-          Drive @('requireexpr', '[...document.querySelectorAll(".quick-input-widget .monaco-list-row")].some(e=>e.innerText.includes("Render HTML"))', '30')
-          Drive @('enter')
+          Copy-Item $qmd evidence/before-preview.qmd
+          Drive @('clicktext','Preview')
           Start-Sleep 5
           Drive @('eval','document.body.innerText')
           Drive @('screenshot','evidence/render-start.png')
@@ -129,18 +126,17 @@ jobs:
           $rendered = $false
           for ($i=0; $i -lt 90; $i++) {
             if ((Test-Path $html) -and (Get-Item $html).Length -gt 10000) { $rendered=$true; break }
-            if ($i -eq 30) {
-              Drive @('visual-code')
-              Drive @('command','Quarto: Preview')
-              Drive @('eval','document.body.innerText')
-              Drive @('screenshot','evidence/preview-start.png')
-            }
             Start-Sleep 2
           }
           Drive @('eval','document.body.innerText')
           Drive @('screenshot','evidence/ordinary-render.png')
-          if (!$rendered) { throw 'Ordinary Positron Render Document did not produce HW5 HTML' }
+          Copy-Item $qmd evidence/after-preview.qmd
+          if (!$rendered) { throw 'The Positron Preview button did not produce HW5 HTML' }
           Copy-Item $html evidence/windows-rendered.html
+          if ((Get-FileHash evidence/downloaded.qmd).Hash -ne (Get-FileHash $qmd).Hash) { throw 'Preview changed the downloaded QMD; inspect retained source files' }
+          $renderText = Get-Content $html -Raw
+          if ($renderText.Contains('library.dir =')) { throw 'Rendered HTML exposes the hidden startup cell' }
+          if ([regex]::Matches($renderText, 'id="ans-exr-').Count -ne 8) { throw 'Rendered HTML must preserve all eight answer boxes' }
       - name: Collect IDE logs
         if: always()
         run: |
