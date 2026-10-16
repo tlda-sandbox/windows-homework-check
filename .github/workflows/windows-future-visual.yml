@@ -74,6 +74,8 @@ jobs:
           Start-Sleep 15
           Drive @('screenshot','evidence/visual-open.png')
           Drive @('visual-eval', 'JSON.stringify({text:document.body.innerText,mathErrors:[...document.querySelectorAll(".katex-error,merror")].map(e=>e.textContent),code:[...document.querySelectorAll(".cm-editor,.CodeMirror")].map(e=>e.innerText),folds:[...document.querySelectorAll("button,[role=button]")].map(e=>({text:e.innerText,title:e.title,label:e.getAttribute("aria-label")}))})')
+          Drive @('visual-eval', '(async()=>{const e=[...document.querySelectorAll(".cm-editor,.CodeMirror")].find(e=>e.textContent.includes("library.files"));if(!e)throw Error("Setup cell not found");e.scrollIntoView({block:"center"});await new Promise(r=>setTimeout(r,1000));return {text:e.innerText,rect:e.getBoundingClientRect().toJSON(),parent:e.parentElement.outerHTML.slice(0,2500)}})()')
+          Drive @('screenshot','evidence/visual-setup.png')
           Drive @('visual-code','set.seed(1)')
           Drive @('command','Quarto: Run All Cells')
           Start-Sleep 30
@@ -96,6 +98,10 @@ jobs:
           Drive @('clicktext','Preview')
           Drive @('preview','homework-causality.html','180','0')
           Drive @('screenshot','evidence/native-preview-loaded.png')
+          Drive @('command','View: Maximize Secondary Side Bar')
+          Start-Sleep 3
+          Drive @('preview','homework-causality.html','30','0')
+          Drive @('screenshot','evidence/native-preview-maximized.png')
           Copy-Item $qmd evidence/after-preview.qmd
           Copy-Item "$folder/homework-causality.html" evidence/windows-rendered.html
           $comparison = & python verify-visual-save.py evidence/downloaded.qmd evidence/after-preview.qmd 2>&1
