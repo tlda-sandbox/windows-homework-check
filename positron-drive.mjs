@@ -144,6 +144,7 @@ switch (action) {
     console.error('Visual editor DOM not found')
     process.exit(16)
   }
+  case 'visual-refold':
   case 'visual-code': {
     const infos = (await send('Target.getTargets')).result.targetInfos
     const inspected = []
@@ -169,13 +170,28 @@ switch (action) {
             await new Promise(r=>setTimeout(r,1000));
             const input=(cell.closest('.pm-code-editor')||cell).querySelector('textarea,[contenteditable=true]');
             if(!input) return {found:false,reason:'R block has no editor input',html:cell.outerHTML.slice(0,1500)};
+            if (${action === 'visual-refold'}) {
+              window.__foldKeyReceipt=[];
+              document.addEventListener('keydown',event=>{
+                const receipt={key:event.key,code:event.code,keyCode:event.keyCode,ctrl:event.ctrlKey,shift:event.shiftKey,isTrusted:event.isTrusted,targetClass:event.target.className,focusMatches:event.target===document.activeElement,defaultPrevented:event.defaultPrevented};
+                window.__foldKeyReceipt.push(receipt);
+                queueMicrotask(()=>{receipt.defaultPrevented=event.defaultPrevented});
+              },{capture:true,passive:true});
+            }
             input.focus();
-            return {found:true,url:location.href,cell:cell.className,input:input.tagName,text:cell.innerText.slice(0,250)};
+            return {found:true,url:location.href,cell:cell.className,input:input.tagName,text:cell.innerText.slice(0,250),focusMatches:document.activeElement===input,focusClass:document.activeElement.className,documentFocused:document.hasFocus()};
           })()`
         }, child)
         const value = result.result?.result?.value
         inspected.push(value || result.error || result.result?.exceptionDetails)
         if (value?.found) {
+          if (action === 'visual-refold') {
+            await send('Input.dispatchKeyEvent', { type: 'keyDown', modifiers: 10, windowsVirtualKeyCode: 219, key: '[', code: 'BracketLeft' }, child)
+            await send('Input.dispatchKeyEvent', { type: 'keyUp', modifiers: 10, windowsVirtualKeyCode: 219, key: '[', code: 'BracketLeft' }, child)
+            const receipt = await send('Runtime.evaluate', { contextId, returnByValue: true, expression: '({operation:"refold-key-receipt",focusClass:document.activeElement?.className,documentFocused:document.hasFocus(),events:window.__foldKeyReceipt,placeholders:document.querySelectorAll(".pm-codemirror-editor .cm-foldPlaceholder").length})' }, child)
+            console.log(JSON.stringify({ before: value, receipt: receipt.result?.result?.value }))
+            process.exit(0)
+          }
           await send('Input.dispatchKeyEvent', { type: 'keyDown', windowsVirtualKeyCode: 39, key: 'ArrowRight', code: 'ArrowRight' }, child)
           await send('Input.dispatchKeyEvent', { type: 'keyUp', windowsVirtualKeyCode: 39, key: 'ArrowRight', code: 'ArrowRight' }, child)
           await new Promise(r => setTimeout(r, 1000))

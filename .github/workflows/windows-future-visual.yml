@@ -170,7 +170,8 @@ jobs:
           Drive @('visual-code','library.files')
           Drive @('visual-eval', '(()=>{const e=[...document.querySelectorAll(".pm-codemirror-editor")].find(e=>e.textContent.includes("library.files"));if(!e||e.querySelector(".cm-foldPlaceholder"))throw Error("Setup did not visibly expand");return {operation:"expanded",found:true,html:e.outerHTML,rect:e.getBoundingClientRect().toJSON()}})()')
           Drive @('screenshot','evidence/visual-setup-expanded.png')
-          Drive @('keys','ctrl+shift+[')
+          Drive @('visual-refold','library.files')
+          Drive @('screenshot','evidence/visual-setup-after-key.png')
           Drive @('visual-eval', '(()=>{const matches=[...document.querySelectorAll(".pm-codemirror-editor .cm-foldPlaceholder")].filter(e=>e.getAttribute("aria-label")==="folded code"&&e.title==="unfold");if(matches.length!==1)throw Error("Setup did not refold through native shortcut");const e=matches[0],cell=e.closest(".pm-codemirror-editor");if(cell.querySelector(".cm-content").textContent.trim()!=="…")throw Error("Setup refold left visible source");e.scrollIntoView({block:"center"});return {operation:"refolded",found:true,html:cell.outerHTML,rect:e.getBoundingClientRect().toJSON()}})()')
           Drive @('screenshot','evidence/visual-setup-refolded.png')
           Drive @('eval','document.body.innerText')
@@ -217,6 +218,7 @@ jobs:
               Get-Content evidence/visual-run.txt | Where-Object { $_.StartsWith('{') } | ForEach-Object {
                 $record = $_ | ConvertFrom-Json
                 if ($record.operation) { $record | Select-Object operation,found,label | ConvertTo-Json -Compress | Write-Output }
+                if ($record.receipt) { $record.receipt | Select-Object operation,focusClass,documentFocused,events,placeholders | ConvertTo-Json -Depth 5 -Compress | Write-Output }
               }
             }
           }
