@@ -149,6 +149,7 @@ jobs:
             $out | Add-Content evidence/visual-run.txt
             if ($rc) { throw "IDE driver failed ($rc), action: $($a[0]); private evidence retained" }
           }
+          Drive @('requireexpr', '[...document.querySelectorAll(".tab")].some(e=>e.textContent.includes("homework-causality.qmd"))', '90')
           SnapshotFold 'before-visual-command'
           Drive @('command','Quarto: Edit in Visual Mode')
           SnapshotFold 'after-visual-command'
@@ -182,6 +183,9 @@ jobs:
           if (Test-Path iso/user/logs) { Copy-Item iso/user/logs evidence/logs -Recurse }
           if ('${{ inputs.observe_fold }}' -eq 'true') {
             $roots = @("$pwd/iso/user", "$pwd/iso/shared", "$env:APPDATA/Positron/logs")
+            $product = Get-Content "$env:LOCALAPPDATA/Programs/Positron/resources/app/product.json" -Raw | ConvertFrom-Json
+            $stateRoot = if ($env:XDG_STATE_HOME) { $env:XDG_STATE_HOME } else { "$env:USERPROFILE/.local/state" }
+            $roots += Join-Path $stateRoot "$($product.applicationName)/logs"
             $logs = @($roots | Where-Object { Test-Path $_ } | ForEach-Object { Get-ChildItem $_ -Filter '*.log' -Recurse -File -Force })
             $logs | Select-Object FullName,Length,LastWriteTimeUtc | ConvertTo-Json | Set-Content evidence/log-inventory.json
             New-Item -ItemType Directory -Force evidence/activation-logs | Out-Null
