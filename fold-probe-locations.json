@@ -1,0 +1,8 @@
+{
+  "sha256": "2599b59824a8a9d38cb24460855146287c87eb88157c33497da21c208b39e782",
+  "entries": [
+    {"token": "TLDA_FOLD_KEYMAP_ENTER", "line": 158063, "column": 102516, "prefix": "for(let e of Or0(x))"},
+    {"token": "TLDA_FOLD_SERVICE_ENTER", "line": 158102, "column": 6212, "prefix": "({from:0,to:state.doc.length})"},
+    {"token": "TLDA_FOLD_UNFOLD_CAL", "line": 158063, "column": 103698, "prefix": "let a=x.lineBlockAt("}
+  ]
+}

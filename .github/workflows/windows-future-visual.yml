@@ -6,6 +6,10 @@ on:
         description: Observe folding activation only, without running cells or Preview
         type: boolean
         default: false
+      probe_entries:
+        description: Capture non-pausing fold handler/service entries and native unfold control
+        type: boolean
+        default: false
 jobs:
   visual:
     runs-on: windows-latest
@@ -121,6 +125,8 @@ jobs:
       - name: Observe ordinary folding activation and loaded bundle
         if: ${{ inputs.observe_fold }}
         timeout-minutes: 5
+        env:
+          FOLD_ENTRY_PROBES: ${{ inputs.probe_entries }}
         run: |
           $ErrorActionPreference = 'Stop'
           npm install ws --no-save --silent
@@ -133,6 +139,7 @@ jobs:
             @{ observedAt=[DateTime]::UtcNow.ToString('o');stage=$stage;bundle=$bundle;sha256=(Get-FileHash $bundle -Algorithm SHA256).Hash;marker=$text.Contains('/* tlda Classroom setup chunk folding */');modifiedAt=(Get-Item $bundle).LastWriteTimeUtc.ToString('o') } | ConvertTo-Json -Compress | Add-Content evidence/fold-stages.jsonl
           }
           SnapshotFold 'before-launch'
+          if ($env:FOLD_ENTRY_PROBES -eq 'true') { 'initial' | Set-Content evidence/probe-phase.txt }
           $observer = Start-Process node -ArgumentList 'observe-fold.mjs', $bundle, 'evidence/fold-observer.jsonl' -RedirectStandardOutput evidence/observer-stdout.txt -RedirectStandardError evidence/observer-stderr.txt -PassThru
           $folder = "$pwd/extract/homework-causality"
           $qmd = "$folder/homework-causality.qmd"
@@ -163,13 +170,33 @@ jobs:
             Start-Sleep 1
           }
           if (!$visualReady) { throw 'Visual editor did not expose code-cell DOM; private observation retained' }
+          if ($env:FOLD_ENTRY_PROBES -eq 'true') {
+            for ($i=0; $i -lt 40; $i++) {
+              if ((Test-Path evidence/probes-ready.json) -or (Test-Path evidence/probes-error.json)) { break }
+              Start-Sleep -Milliseconds 250
+            }
+            if ((Test-Path evidence/probes-error.json) -or !(Test-Path evidence/probes-ready.json)) { throw 'Entry logpoints did not resolve in the pinned loaded script; no refold key sent' }
+          }
           Drive @('visual-eval', 'JSON.stringify({cells:[...document.querySelectorAll(".pm-code-editor")].map(e=>({text:e.innerText,html:e.outerHTML.slice(0,6000),rect:e.getBoundingClientRect().toJSON()})),controls:[...document.querySelectorAll("button,[role=button],[title]")].map(e=>({text:e.innerText,title:e.title,label:e.getAttribute("aria-label"),rect:e.getBoundingClientRect().toJSON()}))})')
           Drive @('visual-eval', '(()=>{const matches=[...document.querySelectorAll(".pm-codemirror-editor .cm-foldPlaceholder")].filter(e=>e.getAttribute("aria-label")==="folded code"&&e.title==="unfold");if(matches.length!==1)throw Error("Expected exactly one native folded setup placeholder");const e=matches[0],cell=e.closest(".pm-codemirror-editor");if(e.textContent.trim()!=="…"||cell.querySelector(".cm-content").textContent.trim()!=="…")throw Error("Setup source is not wholly collapsed");e.scrollIntoView({block:"center"});return {operation:"initial-fold",found:true,placeholder:e.textContent,html:cell.outerHTML,rect:e.getBoundingClientRect().toJSON()}})()')
           Drive @('screenshot','evidence/visual-setup.png')
+          if ($env:FOLD_ENTRY_PROBES -eq 'true') { 'unfold' | Set-Content evidence/probe-phase.txt }
           Drive @('visual-eval', '(()=>{const e=[...document.querySelectorAll(".pm-codemirror-editor .cm-foldPlaceholder")].find(e=>e.getAttribute("aria-label")==="folded code"&&e.title==="unfold");if(!e||e.getBoundingClientRect().width<=0)throw Error("Native unfold control not visible");e.click();return {operation:"unfold-click",found:true,label:"unfold"}})()')
-          Drive @('visual-code','library.files')
+          if ($env:FOLD_ENTRY_PROBES -eq 'true') {
+            $calibrated = $false
+            for ($i=0; $i -lt 20; $i++) {
+              if (Test-Path evidence/probe-hits.jsonl) {
+                $calibrated = @(Get-Content evidence/probe-hits.jsonl | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $_.token -eq 'TLDA_FOLD_UNFOLD_CAL' -and $_.phase -eq 'unfold' }).Count -gt 0
+              }
+              if ($calibrated) { break }
+              Start-Sleep -Milliseconds 250
+            }
+            if (!$calibrated) { throw 'Native unfold positive-control token missing; no refold key sent' }
+          }
+          if ($env:FOLD_ENTRY_PROBES -ne 'true') { Drive @('visual-code','library.files') }
           Drive @('visual-eval', '(()=>{const e=[...document.querySelectorAll(".pm-codemirror-editor")].find(e=>e.textContent.includes("library.files"));if(!e||e.querySelector(".cm-foldPlaceholder"))throw Error("Setup did not visibly expand");return {operation:"expanded",found:true,html:e.outerHTML,rect:e.getBoundingClientRect().toJSON()}})()')
           Drive @('screenshot','evidence/visual-setup-expanded.png')
+          if ($env:FOLD_ENTRY_PROBES -eq 'true') { 'refold' | Set-Content evidence/probe-phase.txt }
           Drive @('visual-refold','library.files')
           Drive @('screenshot','evidence/visual-setup-after-key.png')
           Drive @('visual-eval', '(()=>{const matches=[...document.querySelectorAll(".pm-codemirror-editor .cm-foldPlaceholder")].filter(e=>e.getAttribute("aria-label")==="folded code"&&e.title==="unfold");if(matches.length!==1)throw Error("Setup did not refold through native shortcut");const e=matches[0],cell=e.closest(".pm-codemirror-editor");if(cell.querySelector(".cm-content").textContent.trim()!=="…")throw Error("Setup refold left visible source");e.scrollIntoView({block:"center"});return {operation:"refolded",found:true,html:cell.outerHTML,rect:e.getBoundingClientRect().toJSON()}})()')
@@ -207,7 +234,7 @@ jobs:
               if (Test-Path $recordFile) {
                 Get-Content $recordFile | ForEach-Object {
                   $record = $_ | ConvertFrom-Json
-                  $record | Select-Object kind,observedAt,stage,reason,sha256,marker,modifiedAt,note | ConvertTo-Json -Compress | Write-Output
+                  $record | Select-Object kind,observedAt,stage,reason,sha256,marker,modifiedAt,note,token,phase,timestamp,requested,executable,actual,error | ConvertTo-Json -Depth 5 -Compress | Write-Output
                 }
               }
             }

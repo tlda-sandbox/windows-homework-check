@@ -1,10 +1,12 @@
 // Read-only observation of the installed and actually loaded Quarto bundle.
-import { readFileSync, appendFileSync, watch, statSync } from 'node:fs'
+import { readFileSync, appendFileSync, writeFileSync, watch, statSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 const [bundle, output] = process.argv.slice(2)
 const marker = '/* tlda Classroom setup chunk folding */'
 const record = value => appendFileSync(output, JSON.stringify({ observedAt: new Date().toISOString(), ...value }) + '\n')
 const digest = text => createHash('sha256').update(text).digest('hex')
+const probes = process.env.FOLD_ENTRY_PROBES === 'true' ? JSON.parse(readFileSync('fold-probe-locations.json', 'utf8')) : null
+const phase = () => { try { return readFileSync('evidence/probe-phase.txt', 'utf8').trim() } catch { return 'unknown' } }
 function disk(reason) {
   try {
     const text = readFileSync(bundle, 'utf8')
@@ -33,7 +35,10 @@ async function attach() {
     const attached = await send('Target.attachToTarget', { targetId: target.targetId, flatten: true })
     const session = attached.result?.sessionId
     record({ kind: 'attach', target: target.url, type: target.type, session })
-    if (session) await send('Debugger.enable', {}, session)
+    if (session) {
+      await send('Runtime.enable', {}, session)
+      await send('Debugger.enable', {}, session)
+    }
   }
 }
 async function connect() {
@@ -45,12 +50,47 @@ async function connect() {
   ws.onmessage = async event => {
     const value = JSON.parse(event.data)
     if (value.id && pending.has(value.id)) { const resolve = pending.get(value.id); pending.delete(value.id); resolve(value); return }
+    if (probes && value.method === 'Runtime.consoleAPICalled') {
+      const token = value.params.args?.[0]?.value
+      if (probes.entries.some(entry => entry.token === token)) {
+        const observedPhase = phase()
+        record({ kind: 'probe-token', token, phase: observedPhase, timestamp: value.params.timestamp })
+        appendFileSync('evidence/probe-hits.jsonl', JSON.stringify({ token, phase: observedPhase, timestamp: value.params.timestamp }) + '\n')
+      }
+      return
+    }
     if (value.method !== 'Debugger.scriptParsed') return
     const url = decodeURIComponent(value.params.url || '')
     if (!/index\.js(?:[?#]|$)/.test(url)) return
     const source = await send('Debugger.getScriptSource', { scriptId: value.params.scriptId }, value.sessionId)
     const text = source.result?.scriptSource
     record({ kind: 'loaded-script', url, cdpHash: value.params.hash, sha256: typeof text === 'string' ? digest(text) : null, marker: typeof text === 'string' ? text.includes(marker) : null, error: source.error, note: 'scriptParsed can replay scripts loaded before Debugger.enable; this timestamp is observation time' })
+    if (probes && typeof text === 'string' && digest(text) === probes.sha256) {
+      const locations = []
+      const sourceLines = text.split('\n')
+      for (const entry of probes.entries) {
+        const location = { scriptId: value.params.scriptId, lineNumber: entry.line, columnNumber: entry.column }
+        if (!sourceLines[entry.line]?.slice(entry.column).startsWith(entry.prefix)) {
+          writeFileSync('evidence/probes-error.json', JSON.stringify({ token: entry.token, reason: 'source entry prefix mismatch' }))
+          return
+        }
+        const possible = await send('Debugger.getPossibleBreakpoints', { start: location, end: { ...location, columnNumber: entry.column + entry.prefix.length }, restrictToFunction: true }, value.sessionId)
+        const executable = possible.result?.locations?.[0]
+        if (!executable) {
+          writeFileSync('evidence/probes-error.json', JSON.stringify({ token: entry.token, reason: 'no executable location in entry expression', error: possible.error }))
+          return
+        }
+        const response = await send('Debugger.setBreakpoint', { location: executable, condition: `(console.log(${JSON.stringify(entry.token)}),false)` }, value.sessionId)
+        const actual = response.result?.actualLocation
+        record({ kind: 'probe-location', token: entry.token, requested: location, executable, actual, error: response.error })
+        if (!actual || actual.lineNumber !== executable.lineNumber || actual.columnNumber !== executable.columnNumber) {
+          writeFileSync('evidence/probes-error.json', JSON.stringify({ token: entry.token, requested: executable, actual, error: response.error }))
+          return
+        }
+        locations.push({ token: entry.token, actual })
+      }
+      writeFileSync('evidence/probes-ready.json', JSON.stringify({ sha256: probes.sha256, locations }))
+    }
   }
   record({ kind: 'cdp-connected' })
   await attach()
