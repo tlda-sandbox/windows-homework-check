@@ -10,24 +10,41 @@ def parse(text):
     # Pandoc needs {.r} where Quarto uses {r}. Preserve all code contents.
     lines = []
     fence = None
+    cells = []
+    cell = None
     for line in text.splitlines(keepends=True):
         match = re.match(r"^( {0,3})(`{3,}|~{3,})([^\r\n]*)", line)
         if match and fence:
             run = match.group(2)
             if run[0] == fence[0] and len(run) >= len(fence) and not match.group(3).strip():
+                if cell is not None:
+                    cell["closing"] = match.group(2)
+                    cells.append(cell)
+                    cell = None
                 fence = None
+            elif cell is not None:
+                cell["body"] += line
         elif match:
             fence = match.group(2)
             if re.fullmatch(r"\{[A-Za-z][\w.+-]*\}", match.group(3)):
+                cell = {"opening": match.group(2) + match.group(3), "body": ""}
                 start = match.start(3)
                 line = line[:start + 1] + "." + line[start + 1:]
+        elif cell is not None:
+            cell["body"] += line
         lines.append(line)
+    if cell is not None:
+        cells.append(cell)
     text = "".join(lines)
     result = subprocess.run(
         ["quarto", "pandoc", "--from=markdown", "--to=json"],
         input=text, capture_output=True, text=True, encoding="utf-8", check=True,
     )
-    return json.loads(result.stdout)
+    document = json.loads(result.stdout)
+    # Keep executable identity separate from the reader adaptation above:
+    # {r} executes, while {.r} is merely displayed. Never erase that distinction.
+    document["quarto-executable-cells"] = cells
+    return document
 
 
 def normalize(value):
