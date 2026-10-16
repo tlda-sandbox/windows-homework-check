@@ -1,6 +1,11 @@
 name: Windows future homework visual mode
 on:
   workflow_dispatch:
+    inputs:
+      observe_fold:
+        description: Observe folding activation only, without running cells or Preview
+        type: boolean
+        default: false
 jobs:
   visual:
     runs-on: windows-latest
@@ -15,6 +20,7 @@ jobs:
           r-version: release
       - uses: quarto-dev/quarto-actions/setup@v2
       - name: Install course packages
+        if: ${{ !inputs.observe_fold }}
         run: |
           Rscript -e "install.packages(c('tidyverse','gt','htmltools','kableExtra','knitr','rmarkdown','scales'), repos='https://cloud.r-project.org')"
           if ($LASTEXITCODE) { throw 'Course package installation failed' }
@@ -50,6 +56,7 @@ jobs:
           if ($LASTEXITCODE) { throw 'Trial extension installation failed' }
           & $cli --user-data-dir="$pwd/iso/user" --extensions-dir="$pwd/iso/ext" --list-extensions --show-versions | Set-Content evidence/extensions.txt
       - name: Folder open, Visual mode, ordinary cells, native Preview
+        if: ${{ !inputs.observe_fold }}
         timeout-minutes: 15
         run: |
           $ErrorActionPreference = 'Stop'
@@ -111,6 +118,61 @@ jobs:
           $renderText = Get-Content "$folder/homework-causality.html" -Raw
           if ($renderText.Contains('library.dir =')) { throw 'Rendered HTML exposes hidden startup cell' }
           if ([regex]::Matches($renderText, 'id="ans-exr-').Count -ne 13) { throw 'Rendered HTML must preserve 13 answer boxes' }
+      - name: Observe ordinary folding activation and loaded bundle
+        if: ${{ inputs.observe_fold }}
+        timeout-minutes: 5
+        run: |
+          $ErrorActionPreference = 'Stop'
+          npm install ws --no-save --silent
+          $extension = Get-ChildItem iso/ext -Directory -Filter 'quarto.quarto-*' | Select-Object -First 1
+          if (!$extension) { throw 'Installed Quarto extension directory not found' }
+          $bundle = Join-Path $extension.FullName 'assets/www/editor/index.js'
+          if (!(Test-Path $bundle)) { throw 'Installed Quarto Visual bundle missing' }
+          function SnapshotFold([string] $stage) {
+            $text = Get-Content $bundle -Raw
+            @{ observedAt=[DateTime]::UtcNow.ToString('o');stage=$stage;bundle=$bundle;sha256=(Get-FileHash $bundle -Algorithm SHA256).Hash;marker=$text.Contains('/* tlda Classroom setup chunk folding */');modifiedAt=(Get-Item $bundle).LastWriteTimeUtc.ToString('o') } | ConvertTo-Json -Compress | Add-Content evidence/fold-stages.jsonl
+          }
+          SnapshotFold 'before-launch'
+          $observer = Start-Process node -ArgumentList 'observe-fold.mjs', $bundle, 'evidence/fold-observer.jsonl' -RedirectStandardOutput evidence/observer-stdout.txt -RedirectStandardError evidence/observer-stderr.txt -PassThru
+          $folder = "$pwd/extract/homework-causality"
+          $qmd = "$folder/homework-causality.qmd"
+          $launch = @("--user-data-dir=$pwd/iso/user", "--extensions-dir=$pwd/iso/ext", "--shared-data-dir=$pwd/iso/shared", '--remote-debugging-port=9222', '--new-window', '--disable-workspace-trust', '--log=trace', $qmd, $folder)
+          Start-Process $env:POSITRON_EXE -ArgumentList $launch
+          $ready = $false
+          for ($i=0; $i -lt 60; $i++) {
+            try { Invoke-RestMethod http://127.0.0.1:9222/json/version | ConvertTo-Json | Set-Content evidence/ide-version.json; $ready=$true; break } catch { Start-Sleep 1 }
+          }
+          if (!$ready) { throw 'Windows Positron did not start' }
+          function Drive([string[]] $a) {
+            $out = & node positron-drive.mjs 9222 @a 2>&1
+            $rc = $LASTEXITCODE
+            $out | Add-Content evidence/visual-run.txt
+            if ($rc) { throw "IDE driver failed ($rc), action: $($a[0]); private evidence retained" }
+          }
+          SnapshotFold 'before-visual-command'
+          Drive @('command','Quarto: Edit in Visual Mode')
+          SnapshotFold 'after-visual-command'
+          $visualReady = $false
+          for ($i=0; $i -lt 30; $i++) {
+            $probe = & node positron-drive.mjs 9222 visual-eval '!!document.querySelector(".pm-code-editor")' 2>&1
+            $probeStatus = $LASTEXITCODE
+            $probe | Add-Content evidence/visual-readiness.txt
+            if ($probeStatus -eq 0 -and $probe -contains 'true') { $visualReady=$true; break }
+            Start-Sleep 1
+          }
+          if (!$visualReady) { throw 'Visual editor did not expose code-cell DOM; private observation retained' }
+          Drive @('visual-eval', 'JSON.stringify({cells:[...document.querySelectorAll(".pm-code-editor")].map(e=>({text:e.innerText,html:e.outerHTML.slice(0,6000),rect:e.getBoundingClientRect().toJSON()})),controls:[...document.querySelectorAll("button,[role=button],[title]")].map(e=>({text:e.innerText,title:e.title,label:e.getAttribute("aria-label"),rect:e.getBoundingClientRect().toJSON()}))})')
+          Drive @('visual-eval', '(async()=>{const e=[...document.querySelectorAll(".cm-editor,.CodeMirror")].find(e=>e.textContent.includes("library.files"));if(!e)return {found:false};e.scrollIntoView({block:"center"});return {found:true,rect:e.getBoundingClientRect().toJSON(),parent:e.parentElement.outerHTML.slice(0,6000)}})()')
+          Drive @('screenshot','evidence/visual-setup.png')
+          foreach ($operation in @('collapse','expand','collapse')) {
+            $expression = '(async()=>{const cell=[...document.querySelectorAll(".pm-code-editor")].find(e=>e.textContent.includes("library.files"));if(!cell)return {found:false,reason:"setup cell not found"};const controls=[...cell.querySelectorAll("button,[role=button],[title],[aria-label]")];const visible=e=>{const r=e.getBoundingClientRect();return r.width>0&&r.height>0&&getComputedStyle(e).visibility!=="hidden"};const label=e=>e.getAttribute("aria-label")||e.title||e.textContent;const control=controls.find(e=>visible(e)&&/REQUEST/i.test(label(e))&&(/code|chunk|cell/i.test(label(e))||/^REQUEST$/i.test(label(e))));if(!control)return {found:false,operation:"REQUEST",controls:controls.map(label)};control.scrollIntoView({block:"center"});const before=label(control);control.click();return {found:true,operation:"REQUEST",label:before,html:cell.outerHTML.slice(0,6000)}})()'.Replace('REQUEST',$operation)
+            Drive @('visual-eval',$expression)
+            Drive @('screenshot',"evidence/visual-$operation-$([DateTime]::UtcNow.ToString('HHmmssfff')).png")
+          }
+          Drive @('eval','document.body.innerText')
+          Get-CimInstance Win32_Process | Where-Object { $_.Name -match 'Positron' } | Select-Object Name,ProcessId,CommandLine | ConvertTo-Json -Depth 3 | Set-Content evidence/positron-processes.json
+          SnapshotFold 'after-observation'
+          if (!$observer.HasExited) { Stop-Process -Id $observer.Id }
       - name: Encrypt retained evidence
         if: always()
         env:
@@ -118,6 +180,20 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           if (Test-Path iso/user/logs) { Copy-Item iso/user/logs evidence/logs -Recurse }
+          if ('${{ inputs.observe_fold }}' -eq 'true') {
+            $roots = @("$pwd/iso/user", "$pwd/iso/shared", "$env:APPDATA/Positron/logs")
+            $logs = @($roots | Where-Object { Test-Path $_ } | ForEach-Object { Get-ChildItem $_ -Filter '*.log' -Recurse -File -Force })
+            $logs | Select-Object FullName,Length,LastWriteTimeUtc | ConvertTo-Json | Set-Content evidence/log-inventory.json
+            New-Item -ItemType Directory -Force evidence/activation-logs | Out-Null
+            $budget = 0
+            $index = 0
+            foreach ($log in $logs) {
+              if ($budget + $log.Length -gt 33554432) { continue }
+              Copy-Item $log.FullName "evidence/activation-logs/$index-$($log.Name)"
+              $budget += $log.Length
+              $index++
+            }
+          }
           if (Test-Path extract/homework-causality/homework-causality.qmd) { Copy-Item extract/homework-causality/homework-causality.qmd evidence/final.qmd }
           if (Test-Path extract/homework-causality/homework-causality.html) { Copy-Item extract/homework-causality/homework-causality.html evidence/final.html }
           & node positron-drive.mjs 9222 screenshot evidence/final-native.png 2>&1 | Set-Content evidence/final-capture.txt
