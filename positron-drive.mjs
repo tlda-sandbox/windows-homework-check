@@ -246,9 +246,10 @@ switch (action) {
     const parts = combo.split('+')
     const modifiers = (parts.includes('ctrl') ? 2 : 0) | (parts.includes('shift') ? 8 : 0) | (parts.includes('alt') ? 1 : 0) | (parts.includes('win') ? 4 : 0)
     const key = parts.filter(x => !['ctrl', 'shift', 'alt', 'win'].includes(x)).pop()
-    const VK = { p: 80, a: 65, b: 66, c: 67, d: 68, e: 69, f: 70, h: 72, i: 73, k: 73, n: 78, o: 79, r: 82, s: 83, w: 87, x: 88, enter: 13, escape: 27 }[key] || 0
-    await send('Input.dispatchKeyEvent', { type: 'keyDown', modifiers, windowsVirtualKeyCode: VK, key, code: 'Key' + key.toUpperCase() }, sid)
-    await send('Input.dispatchKeyEvent', { type: 'keyUp', modifiers, windowsVirtualKeyCode: VK, key, code: 'Key' + key.toUpperCase() }, sid)
+    const VK = { p: 80, a: 65, b: 66, c: 67, d: 68, e: 69, f: 70, h: 72, i: 73, k: 73, n: 78, o: 79, r: 82, s: 83, w: 87, x: 88, '[': 219, ']': 221, enter: 13, escape: 27 }[key] || 0
+    const code = key === '[' ? 'BracketLeft' : key === ']' ? 'BracketRight' : 'Key' + key.toUpperCase()
+    await send('Input.dispatchKeyEvent', { type: 'keyDown', modifiers, windowsVirtualKeyCode: VK, key, code }, sid)
+    await send('Input.dispatchKeyEvent', { type: 'keyUp', modifiers, windowsVirtualKeyCode: VK, key, code }, sid)
     await new Promise(r => setTimeout(r, 1200))
     console.log('sent ' + combo)
     break
