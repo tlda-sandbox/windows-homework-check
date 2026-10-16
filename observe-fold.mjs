@@ -114,6 +114,9 @@ async function connect() {
     const source = await send('Debugger.getScriptSource', { scriptId: value.params.scriptId }, value.sessionId)
     const text = source.result?.scriptSource
     record({ kind: 'loaded-script', url, cdpHash: value.params.hash, sha256: typeof text === 'string' ? digest(text) : null, marker: typeof text === 'string' ? text.includes(marker) : null, error: source.error, note: 'scriptParsed can replay scripts loaded before Debugger.enable; this timestamp is observation time' })
+    if (typeof text === 'string' && process.env.FOLD_EXPECTED_SHA256 && digest(text) === process.env.FOLD_EXPECTED_SHA256 && text.includes(marker)) {
+      writeFileSync('evidence/loaded-bundle-ready.json', JSON.stringify({ sha256: digest(text), marker: true }))
+    }
     if (probes && !preparedProbes && typeof text === 'string' && digest(text) === probes.sha256) {
       const prepared = []
       const sourceLines = text.split('\n')

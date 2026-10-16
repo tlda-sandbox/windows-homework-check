@@ -10,6 +10,10 @@ on:
         description: Capture non-pausing fold handler/service entries and native unfold control
         type: boolean
         default: false
+      check_hw5:
+        description: Check changed folding candidate on the exact live HW5 archive
+        type: boolean
+        default: false
 jobs:
   visual:
     runs-on: windows-latest
@@ -24,13 +28,14 @@ jobs:
           r-version: release
       - uses: quarto-dev/quarto-actions/setup@v2
       - name: Install course packages
-        if: ${{ !inputs.observe_fold }}
+        if: ${{ !inputs.observe_fold || inputs.check_hw5 }}
         run: |
           Rscript -e "install.packages(c('tidyverse','gt','htmltools','kableExtra','knitr','rmarkdown','scales'), repos='https://cloud.r-project.org')"
           if ($LASTEXITCODE) { throw 'Course package installation failed' }
       - name: Prepare private candidate and isolated Windows IDE
         env:
           CANDIDATE_KEY: ${{ secrets.CANDIDATE_KEY }}
+          CHECK_HW5: ${{ inputs.check_hw5 }}
         run: |
           $ErrorActionPreference = 'Stop'
           $ProgressPreference = 'SilentlyContinue'
@@ -42,11 +47,21 @@ jobs:
           $pins = Get-Content candidate-pins.json -Raw | ConvertFrom-Json
           if ((Get-FileHash candidate.zip -Algorithm SHA256).Hash.ToLower() -ne $pins.archive) { throw 'Candidate archive hash mismatch' }
           if ((Get-FileHash candidate.vsix -Algorithm SHA256).Hash.ToLower() -ne $pins.extension) { throw 'Candidate extension hash mismatch' }
+          $document = 'homework-causality'
+          if ($env:CHECK_HW5 -eq 'true') {
+            if ('${{ inputs.observe_fold }}' -ne 'true' -or '${{ inputs.probe_entries }}' -eq 'true') { throw 'HW5 acceptance requires fold observation with old diagnostic probes disabled' }
+            Invoke-WebRequest 'https://qtm285.github.io/static/book/homework/handouts/homework-comparing-estimators-handout.zip' -OutFile candidate.zip
+            if ((Get-FileHash candidate.zip -Algorithm SHA256).Hash.ToLower() -ne $pins.hw5Archive) { throw 'Live HW5 archive hash mismatch' }
+            $document = 'homework-comparing-estimators'
+            "FOLD_EXPECTED_SHA256=$($pins.foldBundle)" | Add-Content $env:GITHUB_ENV
+          }
+          "CHECK_DOCUMENT=$document" | Add-Content $env:GITHUB_ENV
           Copy-Item candidate-pins.json evidence/input-pins.json
           Rscript --version 2>&1 | Set-Content evidence/r-version.txt
           quarto --version | Set-Content evidence/quarto-version.txt
           Expand-Archive candidate.zip -DestinationPath extract
-          Copy-Item extract/homework-causality/homework-causality.qmd evidence/downloaded.qmd
+          Copy-Item "extract/$document/$document.qmd" evidence/downloaded.qmd
+          Get-FileHash candidate.zip,candidate.vsix -Algorithm SHA256 | Select-Object Path,Hash | ConvertTo-Json | Set-Content evidence/actual-input-hashes.json
           Invoke-WebRequest 'https://cdn.posit.co/positron/releases/win/x86_64/Positron-2026.10.0-297-UserSetup-x64.exe' -OutFile setup.exe
           $p = Start-Process ./setup.exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-','/CURRENTUSER' -PassThru
           if (!$p.WaitForExit(300000) -or $p.ExitCode -ne 0) { throw 'Positron installation failed' }
@@ -124,9 +139,10 @@ jobs:
           if ([regex]::Matches($renderText, 'id="ans-exr-').Count -ne 13) { throw 'Rendered HTML must preserve 13 answer boxes' }
       - name: Observe ordinary folding activation and loaded bundle
         if: ${{ inputs.observe_fold }}
-        timeout-minutes: 5
+        timeout-minutes: 10
         env:
           FOLD_ENTRY_PROBES: ${{ inputs.probe_entries }}
+          CHECK_HW5: ${{ inputs.check_hw5 }}
         run: |
           $ErrorActionPreference = 'Stop'
           npm install ws --no-save --silent
@@ -141,8 +157,8 @@ jobs:
           SnapshotFold 'before-launch'
           if ($env:FOLD_ENTRY_PROBES -eq 'true') { 'initial' | Set-Content evidence/probe-phase.txt }
           $observer = Start-Process node -ArgumentList 'observe-fold.mjs', $bundle, 'evidence/fold-observer.jsonl' -RedirectStandardOutput evidence/observer-stdout.txt -RedirectStandardError evidence/observer-stderr.txt -PassThru
-          $folder = "$pwd/extract/homework-causality"
-          $qmd = "$folder/homework-causality.qmd"
+          $folder = "$pwd/extract/$env:CHECK_DOCUMENT"
+          $qmd = "$folder/$env:CHECK_DOCUMENT.qmd"
           $launch = @("--user-data-dir=$pwd/iso/user", "--extensions-dir=$pwd/iso/ext", "--shared-data-dir=$pwd/iso/shared", '--remote-debugging-port=9222', '--new-window', '--disable-workspace-trust', '--log=trace', $qmd, $folder)
           Start-Process $env:POSITRON_EXE -ArgumentList $launch
           $ready = $false
@@ -156,7 +172,7 @@ jobs:
             $out | Add-Content evidence/visual-run.txt
             if ($rc) { throw "IDE driver failed ($rc), action: $($a[0]); private evidence retained" }
           }
-          Drive @('requireexpr', '[...document.querySelectorAll(".tab")].some(e=>e.textContent.includes("homework-causality.qmd"))', '90')
+          Drive @('requireexpr', "[...document.querySelectorAll('.tab')].some(e=>e.textContent.includes('$env:CHECK_DOCUMENT.qmd'))", '90')
           Drive @('requireexpr', '[...document.querySelectorAll("a,button,[role=button],.action-label")].some(e=>e.textContent.trim()==="Preview"&&e.getBoundingClientRect().width>0)', '90')
           SnapshotFold 'before-visual-command'
           Drive @('command','Quarto: Edit in Visual Mode')
@@ -170,6 +186,14 @@ jobs:
             Start-Sleep 1
           }
           if (!$visualReady) { throw 'Visual editor did not expose code-cell DOM; private observation retained' }
+          if ($env:CHECK_HW5 -eq 'true') {
+            for ($i=0; $i -lt 40; $i++) {
+              if (Test-Path evidence/loaded-bundle-ready.json) { break }
+              Start-Sleep -Milliseconds 250
+            }
+            if (!(Test-Path evidence/loaded-bundle-ready.json)) { throw 'Expected changed bundle was not actually loaded; no refold key sent' }
+            Drive @('command','View: Toggle Zen Mode')
+          }
           if ($env:FOLD_ENTRY_PROBES -eq 'true') {
             for ($i=0; $i -lt 40; $i++) {
               if ((Test-Path evidence/probes-ready.json) -or (Test-Path evidence/probes-error.json)) { break }
@@ -216,6 +240,26 @@ jobs:
           }
           Drive @('visual-eval', '(()=>{const matches=[...document.querySelectorAll(".pm-codemirror-editor .cm-foldPlaceholder")].filter(e=>e.getAttribute("aria-label")==="folded code"&&e.title==="unfold");if(matches.length!==1)throw Error("Setup did not refold through native shortcut");const e=matches[0],cell=e.closest(".pm-codemirror-editor");if(cell.querySelector(".cm-content").textContent.trim()!=="…")throw Error("Setup refold left visible source");e.scrollIntoView({block:"center"});return {operation:"refolded",found:true,html:cell.outerHTML,rect:e.getBoundingClientRect().toJSON()}})()')
           Drive @('screenshot','evidence/visual-setup-refolded.png')
+          if ($env:CHECK_HW5 -eq 'true') {
+            Drive @('visual-eval', '(()=>{const e=document.querySelector(".pm-codemirror-editor .cm-foldPlaceholder");if(!e)throw Error("Refold placeholder missing");e.click();return {operation:"unfold-for-outdent",found:true}})()')
+            Drive @('visual-outdent','library.files')
+            Drive @('screenshot','evidence/visual-setup-outdented.png')
+            Drive @('visual-run-setup','library.files')
+            Drive @('command','Focus Console')
+            Drive @('r', 'cat("HW5_SETUP_COMPLETION:", exists("with_seed") && is.function(with_seed) && exists("width_binom") && is.function(width_binom) && exists("class.theme") && inherits(class.theme, "theme") && exists("simplified.theme"), "\n")')
+            Drive @('requireexpr', 'document.getElementById("workbench.panel.positronConsole")?.textContent.includes("HW5_SETUP_COMPLETION: TRUE")', '180')
+            Drive @('console')
+            Drive @('screenshot','evidence/console-setup-completion.png')
+            Drive @('command','View: Toggle Panel Visibility')
+            Drive @('visual-answer')
+            Drive @('screenshot','evidence/visual-answer-restored.png')
+            Drive @('keys','ctrl+s')
+            Copy-Item $qmd evidence/after-visual.qmd
+            $comparison = & python verify-visual-save.py evidence/downloaded.qmd evidence/after-visual.qmd 2>&1
+            $comparisonStatus = $LASTEXITCODE
+            $comparison | Set-Content evidence/source-comparison.txt
+            if ($comparisonStatus) { throw 'Visual folding/edit controls changed homework content; see encrypted comparison' }
+          }
           Drive @('eval','document.body.innerText')
           Get-CimInstance Win32_Process | Where-Object { $_.Name -match 'Positron' } | Select-Object Name,ProcessId,CommandLine | ConvertTo-Json -Depth 3 | Set-Content evidence/positron-processes.json
           SnapshotFold 'after-observation'
@@ -264,8 +308,8 @@ jobs:
               }
             }
           }
-          if (Test-Path extract/homework-causality/homework-causality.qmd) { Copy-Item extract/homework-causality/homework-causality.qmd evidence/final.qmd }
-          if (Test-Path extract/homework-causality/homework-causality.html) { Copy-Item extract/homework-causality/homework-causality.html evidence/final.html }
+          if (Test-Path "extract/$env:CHECK_DOCUMENT/$env:CHECK_DOCUMENT.qmd") { Copy-Item "extract/$env:CHECK_DOCUMENT/$env:CHECK_DOCUMENT.qmd" evidence/final.qmd }
+          if (Test-Path "extract/$env:CHECK_DOCUMENT/$env:CHECK_DOCUMENT.html") { Copy-Item "extract/$env:CHECK_DOCUMENT/$env:CHECK_DOCUMENT.html" evidence/final.html }
           & node positron-drive.mjs 9222 screenshot evidence/final-native.png 2>&1 | Set-Content evidence/final-capture.txt
           & node positron-drive.mjs 9222 eval 'document.body.innerText' 2>&1 | Set-Content evidence/final-workbench.txt
           Compress-Archive evidence/* -DestinationPath evidence.zip

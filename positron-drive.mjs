@@ -144,6 +144,8 @@ switch (action) {
     console.error('Visual editor DOM not found')
     process.exit(16)
   }
+  case 'visual-outdent':
+  case 'visual-run-setup':
   case 'visual-refold':
   case 'visual-code': {
     const infos = (await send('Target.getTargets')).result.targetInfos
@@ -185,6 +187,35 @@ switch (action) {
         const value = result.result?.result?.value
         inspected.push(value || result.error || result.result?.exceptionDetails)
         if (value?.found) {
+          const childEval = async expression => {
+            const response = await send('Runtime.evaluate', { contextId, returnByValue: true, awaitPromise: true, expression }, child)
+            if (response.result?.exceptionDetails) throw Error(JSON.stringify(response.result.exceptionDetails))
+            return response.result?.result?.value
+          }
+          const childKey = async (key, code, windowsVirtualKeyCode, modifiers = 0) => {
+            for (const type of ['keyDown', 'keyUp']) await send('Input.dispatchKeyEvent', { type, key, code, windowsVirtualKeyCode, modifiers }, child)
+          }
+          if (action === 'visual-outdent') {
+            const content = 'document.activeElement.textContent'
+            const before = await childEval(content)
+            await childKey('Home', 'Home', 36, 2)
+            await send('Input.insertText', { text: ' ' }, child)
+            const indented = await childEval(content)
+            if (indented !== ' ' + before) throw Error('Native indentation control did not add one leading space')
+            const shot = await send('Page.captureScreenshot', { format: 'png' }, sid)
+            if (shot.result?.data) (await import('node:fs')).writeFileSync('evidence/visual-setup-indented.png', Buffer.from(shot.result.data, 'base64'))
+            await childKey('[', 'BracketLeft', 219, 2)
+            const after = await childEval(content)
+            console.log(JSON.stringify({ operation: 'plain-outdent', before, indented, after, restored: after === before }))
+            if (after !== before) throw Error('Plain Ctrl+[ did not restore the original setup text')
+            process.exit(0)
+          }
+          if (action === 'visual-run-setup') {
+            const rect = await childEval(`(()=>{const input=document.activeElement;const cell=input.closest('.pm-code-editor');const button=cell?.querySelector('.pm-codeview-run-button');if(!button)throw Error('Visible setup Run Cell control missing');const r=button.getBoundingClientRect();if(!r.width||!r.height)throw Error('Setup Run Cell control not visible');return {x:r.x+r.width/2,y:r.y+r.height/2,title:button.title}})()`)
+            for (const type of ['mousePressed', 'mouseReleased']) await send('Input.dispatchMouseEvent', { type, x: rect.x, y: rect.y, button: 'left', clickCount: 1 }, child)
+            console.log(JSON.stringify({ operation: 'setup-run-click', title: rect.title, found: true }))
+            process.exit(0)
+          }
           if (action === 'visual-refold') {
             await send('Input.dispatchKeyEvent', { type: 'keyDown', modifiers: 10, windowsVirtualKeyCode: 219, key: '[', code: 'BracketLeft' }, child)
             await send('Input.dispatchKeyEvent', { type: 'keyUp', modifiers: 10, windowsVirtualKeyCode: 219, key: '[', code: 'BracketLeft' }, child)
@@ -200,6 +231,41 @@ switch (action) {
       }
     }
     console.error(JSON.stringify(inspected)); process.exit(15)
+  }
+  case 'visual-answer': {
+    const targets = (await send('Target.getTargets')).result.targetInfos
+    for (const target of targets.filter(t => ['page', 'iframe'].includes(t.type))) {
+      const child = (await send('Target.attachToTarget', { targetId: target.targetId, flatten: true })).result?.sessionId
+      if (!child) continue
+      const tree = await send('Page.getFrameTree', {}, child)
+      const frames = []
+      const walk = node => { if (!node) return; frames.push(node.frame); for (const c of node.childFrames || []) walk(c) }
+      walk(tree.result?.frameTree)
+      for (const frame of frames) {
+        const contextId = (await send('Page.createIsolatedWorld', { frameId: frame.id, worldName: 'hw5-answer-check' }, child)).result?.executionContextId
+        if (!contextId) continue
+        const read = async expression => {
+          const r = await send('Runtime.evaluate', { contextId, expression, returnByValue: true, awaitPromise: true }, child)
+          if (r.result?.exceptionDetails) throw Error(JSON.stringify(r.result.exceptionDetails))
+          return r.result?.result?.value
+        }
+        const before = await read(`(async()=>{const e=document.querySelector('.pm-div.callout-answer');const exercise=document.querySelector('.pm-div.callout-exercise');if(!e||!exercise)return null;const p=e.querySelector('p');if(!p)throw Error('Answer paragraph missing');p.scrollIntoView({block:'center'});await new Promise(r=>setTimeout(r,500));const r=p.getBoundingClientRect();return {text:e.textContent,answers:document.querySelectorAll('.pm-div.callout-answer').length,exercises:document.querySelectorAll('.pm-div.callout-exercise').length,answerColor:getComputedStyle(e).backgroundColor,exerciseColor:getComputedStyle(exercise).backgroundColor,rect:{x:r.x+Math.min(10,r.width/2),y:r.y+r.height/2}}})()`)
+        if (!before) continue
+        for (const type of ['mousePressed', 'mouseReleased']) await send('Input.dispatchMouseEvent', { type, ...before.rect, button: 'left', clickCount: 1 }, child)
+        const marker = 'TLDA native answer edit control'
+        await send('Input.insertText', { text: marker }, child)
+        const edited = await read("document.querySelector('.pm-div.callout-answer').textContent")
+        if (!edited.includes(marker)) throw Error('Native typing did not edit the answer area')
+        const shot = await send('Page.captureScreenshot', { format: 'png' }, sid)
+        if (shot.result?.data) (await import('node:fs')).writeFileSync('evidence/visual-answer-edited.png', Buffer.from(shot.result.data, 'base64'))
+        for (const type of ['keyDown', 'keyUp']) await send('Input.dispatchKeyEvent', { type, key: 'z', code: 'KeyZ', windowsVirtualKeyCode: 90, modifiers: 2 }, child)
+        const restored = await read("document.querySelector('.pm-div.callout-answer').textContent")
+        console.log(JSON.stringify({ operation: 'answer-edit-undo', before, edited, restored, preserved: restored === before.text }))
+        if (restored !== before.text || before.answers !== 8 || before.exercises !== 8) throw Error('Answer edit undo or callout counts failed')
+        process.exit(0)
+      }
+    }
+    throw Error('HW5 Visual answer area not found')
   }
   case 'requireexpr': {
     const secs = Math.max(1, Number(args.pop()) || 30)
