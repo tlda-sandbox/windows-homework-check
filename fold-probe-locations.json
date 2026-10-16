@@ -1,8 +1,13 @@
 {
   "sha256": "2599b59824a8a9d38cb24460855146287c87eb88157c33497da21c208b39e782",
   "entries": [
-    {"token": "TLDA_FOLD_KEYMAP_ENTER", "line": 158063, "column": 102516, "prefix": "for(let e of Or0(x))"},
-    {"token": "TLDA_FOLD_SERVICE_ENTER", "line": 158102, "column": 6212, "prefix": "({from:0,to:state.doc.length})"},
+    {"token": "TLDA_FOLD_JO0_ENTRY", "arm": "refold", "line": 158063, "column": 25103, "prefix": "function jo0(x,e,t,i){let o=EZ(e),r=ax(o,0),a=Et(r)==o.lengt", "target": "let o=EZ(e)"},
+    {"token": "TLDA_FOLD_MAP_KEYS", "arm": "refold", "line": 158063, "column": 25408, "prefix": "if(l(d[s+Vb(o,e,!a)]))return!0;if(a&&(e.altKey||e.metaKey||e", "target": "if(l(d[s+Vb(o,e,!a)]))", "condition": "(console.log(\"TLDA_FOLD_MAP_KEYS\", !!d[\"Ctrl-[\"], !!d[\"Shift-Ctrl-[\"]), false)"},
+    {"token": "TLDA_FOLD_TL_ENTRY", "arm": "refold", "line": 158085, "column": 160994, "prefix": "TL=({state:x,dispatch:e})=>x.readOnly?!1:(e(x.update(ul0(x,(", "target": "x.readOnly"},
+    {"token": "TLDA_FOLD_TL_RETURN_TRUE", "arm": "refold", "line": 158063, "column": 25339, "prefix": "p(t,e)))return!0;f.preventDefault&&(u=!0)}return!1},d=x[i],h", "target": "return!0;", "condition": "(p===TL && (console.log(\"TLDA_FOLD_TL_RETURN_TRUE\"), false))"},
+    {"token": "TLDA_FOLD_FIRST_LOOKUP_CONSUMED", "arm": "refold", "line": 158063, "column": 25430, "prefix": "return!0;if(a&&(e.altKey||e.metaKey||e.ctrlKey)&&!(G0.window", "target": "return!0;"},
+    {"token": "TLDA_FOLD_SHIFTED_FALLBACK", "arm": "refold", "line": 158063, "column": 25642, "prefix": "else if(a&&e.shiftKey&&l(d[s+Vb(o,e,!0)]))return!0;if(l(d._a", "target": "l(d[s+Vb(o,e,!0)])"},
+    {"token": "TLDA_FOLD_MEN_ENTRY", "arm": "refold", "line": 158063, "column": 102516, "prefix": "for(let e of Or0(x))"},
     {"token": "TLDA_FOLD_UNFOLD_CAL", "line": 158063, "column": 103698, "prefix": "let a=x.lineBlockAt("}
   ]
 }

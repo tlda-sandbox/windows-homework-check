@@ -197,8 +197,23 @@ jobs:
           Drive @('visual-eval', '(()=>{const e=[...document.querySelectorAll(".pm-codemirror-editor")].find(e=>e.textContent.includes("library.files"));if(!e||e.querySelector(".cm-foldPlaceholder"))throw Error("Setup did not visibly expand");return {operation:"expanded",found:true,html:e.outerHTML,rect:e.getBoundingClientRect().toJSON()}})()')
           Drive @('screenshot','evidence/visual-setup-expanded.png')
           if ($env:FOLD_ENTRY_PROBES -eq 'true') { 'refold' | Set-Content evidence/probe-phase.txt }
+          if ($env:FOLD_ENTRY_PROBES -eq 'true') {
+            for ($i=0; $i -lt 40; $i++) {
+              if ((Test-Path evidence/route-probes-ready.json) -or (Test-Path evidence/probes-error.json)) { break }
+              Start-Sleep -Milliseconds 250
+            }
+            if ((Test-Path evidence/probes-error.json) -or !(Test-Path evidence/route-probes-ready.json)) { throw 'Refold route probes did not resolve; no key sent' }
+          }
           Drive @('visual-refold','library.files')
           Drive @('screenshot','evidence/visual-setup-after-key.png')
+          if ($env:FOLD_ENTRY_PROBES -eq 'true') {
+            'after-refold' | Set-Content evidence/probe-phase.txt
+            for ($i=0; $i -lt 40; $i++) {
+              if ((Test-Path evidence/route-probes-removed.json) -or (Test-Path evidence/probes-error.json)) { break }
+              Start-Sleep -Milliseconds 250
+            }
+            if ((Test-Path evidence/probes-error.json) -or !(Test-Path evidence/route-probes-removed.json)) { throw 'Refold route probe removal failed; see encrypted diagnostics' }
+          }
           Drive @('visual-eval', '(()=>{const matches=[...document.querySelectorAll(".pm-codemirror-editor .cm-foldPlaceholder")].filter(e=>e.getAttribute("aria-label")==="folded code"&&e.title==="unfold");if(matches.length!==1)throw Error("Setup did not refold through native shortcut");const e=matches[0],cell=e.closest(".pm-codemirror-editor");if(cell.querySelector(".cm-content").textContent.trim()!=="…")throw Error("Setup refold left visible source");e.scrollIntoView({block:"center"});return {operation:"refolded",found:true,html:cell.outerHTML,rect:e.getBoundingClientRect().toJSON()}})()')
           Drive @('screenshot','evidence/visual-setup-refolded.png')
           Drive @('eval','document.body.innerText')
@@ -234,7 +249,7 @@ jobs:
               if (Test-Path $recordFile) {
                 Get-Content $recordFile | ForEach-Object {
                   $record = $_ | ConvertFrom-Json
-                  $record | Select-Object kind,observedAt,stage,reason,sha256,marker,modifiedAt,note,token,phase,timestamp,requested,executable,actual,error | ConvertTo-Json -Depth 5 -Compress | Write-Output
+                  $record | Select-Object kind,observedAt,stage,reason,sha256,marker,modifiedAt,note,token,phase,timestamp,outcomes,count,requested,executable,actual,error | ConvertTo-Json -Depth 5 -Compress | Write-Output
                 }
               }
             }

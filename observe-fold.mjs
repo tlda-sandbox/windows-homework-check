@@ -7,6 +7,12 @@ const record = value => appendFileSync(output, JSON.stringify({ observedAt: new 
 const digest = text => createHash('sha256').update(text).digest('hex')
 const probes = process.env.FOLD_ENTRY_PROBES === 'true' ? JSON.parse(readFileSync('fold-probe-locations.json', 'utf8')) : null
 const phase = () => { try { return readFileSync('evidence/probe-phase.txt', 'utf8').trim() } catch { return 'unknown' } }
+let preparedProbes
+let calibrationIds = []
+let routeIds = []
+let routeBusy = false
+let routeArmed = false
+let routeRemoved = false
 function disk(reason) {
   try {
     const text = readFileSync(bundle, 'utf8')
@@ -26,6 +32,44 @@ function send(method, params = {}, sessionId) {
     pending.set(id, value => { clearTimeout(timeout); resolve(value) })
     ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }))
   })
+}
+async function installProbe(probe) {
+  const condition = probe.entry.condition || `(console.log(${JSON.stringify(probe.entry.token)}),false)`
+  const response = await send('Debugger.setBreakpoint', { location: probe.executable, condition }, probe.session)
+  const actual = response.result?.actualLocation
+  record({ kind: 'probe-location', token: probe.entry.token, requested: probe.requested, executable: probe.executable, actual, error: response.error })
+  if (!actual || actual.lineNumber !== probe.executable.lineNumber || actual.columnNumber !== probe.executable.columnNumber) throw Error('Probe failed to resolve: ' + probe.entry.token)
+  return { breakpointId: response.result.breakpointId, session: probe.session, token: probe.entry.token, actual }
+}
+async function removeProbes(installed) {
+  for (const probe of installed) {
+    const response = await send('Debugger.removeBreakpoint', { breakpointId: probe.breakpointId }, probe.session)
+    if (response.error) throw Error('Probe removal failed: ' + probe.token)
+  }
+}
+async function syncProbePhase() {
+  if (!preparedProbes || routeBusy) return
+  if (phase() === 'refold' && !routeArmed) {
+    routeBusy = true
+    try {
+      await removeProbes(calibrationIds)
+      calibrationIds = []
+      for (const probe of preparedProbes.filter(p => p.entry.arm === 'refold')) routeIds.push(await installProbe(probe))
+      routeArmed = true
+      writeFileSync('evidence/route-probes-ready.json', JSON.stringify({ sha256: probes.sha256, locations: routeIds.map(({ token, actual }) => ({ token, actual })) }))
+    } catch (error) {
+      writeFileSync('evidence/probes-error.json', JSON.stringify({ reason: String(error) }))
+    } finally { routeBusy = false }
+  } else if (phase() === 'after-refold' && routeArmed && !routeRemoved) {
+    routeBusy = true
+    try {
+      await removeProbes(routeIds)
+      routeRemoved = true
+      record({ kind: 'route-probes-removed', count: routeIds.length })
+      writeFileSync('evidence/route-probes-removed.json', JSON.stringify({ count: routeIds.length }))
+    } catch (error) { writeFileSync('evidence/probes-error.json', JSON.stringify({ reason: String(error) })) }
+    finally { routeBusy = false }
+  }
 }
 async function attach() {
   const targets = await send('Target.getTargets')
@@ -54,8 +98,13 @@ async function connect() {
       const token = value.params.args?.[0]?.value
       if (probes.entries.some(entry => entry.token === token)) {
         const observedPhase = phase()
-        record({ kind: 'probe-token', token, phase: observedPhase, timestamp: value.params.timestamp })
-        appendFileSync('evidence/probe-hits.jsonl', JSON.stringify({ token, phase: observedPhase, timestamp: value.params.timestamp }) + '\n')
+        const outcomes = token === 'TLDA_FOLD_MAP_KEYS' ? value.params.args.slice(1, 3).map(argument => argument.value) : undefined
+        if (outcomes && (outcomes.length !== 2 || outcomes.some(v => typeof v !== 'boolean'))) {
+          writeFileSync('evidence/probes-error.json', JSON.stringify({ reason: 'Map probe emitted non-boolean output' }))
+          return
+        }
+        record({ kind: 'probe-token', token, phase: observedPhase, timestamp: value.params.timestamp, outcomes })
+        appendFileSync('evidence/probe-hits.jsonl', JSON.stringify({ token, phase: observedPhase, timestamp: value.params.timestamp, outcomes }) + '\n')
       }
       return
     }
@@ -65,8 +114,8 @@ async function connect() {
     const source = await send('Debugger.getScriptSource', { scriptId: value.params.scriptId }, value.sessionId)
     const text = source.result?.scriptSource
     record({ kind: 'loaded-script', url, cdpHash: value.params.hash, sha256: typeof text === 'string' ? digest(text) : null, marker: typeof text === 'string' ? text.includes(marker) : null, error: source.error, note: 'scriptParsed can replay scripts loaded before Debugger.enable; this timestamp is observation time' })
-    if (probes && typeof text === 'string' && digest(text) === probes.sha256) {
-      const locations = []
+    if (probes && !preparedProbes && typeof text === 'string' && digest(text) === probes.sha256) {
+      const prepared = []
       const sourceLines = text.split('\n')
       for (const entry of probes.entries) {
         const location = { scriptId: value.params.scriptId, lineNumber: entry.line, columnNumber: entry.column }
@@ -74,22 +123,23 @@ async function connect() {
           writeFileSync('evidence/probes-error.json', JSON.stringify({ token: entry.token, reason: 'source entry prefix mismatch' }))
           return
         }
-        const possible = await send('Debugger.getPossibleBreakpoints', { start: location, end: { ...location, columnNumber: entry.column + entry.prefix.length }, restrictToFunction: true }, value.sessionId)
+        const offset = entry.target ? entry.prefix.indexOf(entry.target) : 0
+        if (offset < 0) throw Error('Probe target missing from verified prefix: ' + entry.token)
+        const start = { ...location, columnNumber: entry.column + offset }
+        const end = { ...start, columnNumber: start.columnNumber + (entry.target || entry.prefix).length }
+        const possible = await send('Debugger.getPossibleBreakpoints', { start, end, restrictToFunction: true }, value.sessionId)
         const executable = possible.result?.locations?.[0]
-        if (!executable) {
+        if (!executable || executable.lineNumber !== start.lineNumber || executable.columnNumber < start.columnNumber || executable.columnNumber >= end.columnNumber) {
           writeFileSync('evidence/probes-error.json', JSON.stringify({ token: entry.token, reason: 'no executable location in entry expression', error: possible.error }))
           return
         }
-        const response = await send('Debugger.setBreakpoint', { location: executable, condition: `(console.log(${JSON.stringify(entry.token)}),false)` }, value.sessionId)
-        const actual = response.result?.actualLocation
-        record({ kind: 'probe-location', token: entry.token, requested: location, executable, actual, error: response.error })
-        if (!actual || actual.lineNumber !== executable.lineNumber || actual.columnNumber !== executable.columnNumber) {
-          writeFileSync('evidence/probes-error.json', JSON.stringify({ token: entry.token, requested: executable, actual, error: response.error }))
-          return
-        }
-        locations.push({ token: entry.token, actual })
+        prepared.push({ entry, requested: location, executable, session: value.sessionId })
       }
-      writeFileSync('evidence/probes-ready.json', JSON.stringify({ sha256: probes.sha256, locations }))
+      try {
+        for (const probe of prepared.filter(p => p.entry.arm !== 'refold')) calibrationIds.push(await installProbe(probe))
+        preparedProbes = prepared
+        writeFileSync('evidence/probes-ready.json', JSON.stringify({ sha256: probes.sha256, prepared: prepared.map(({ entry, executable }) => ({ token: entry.token, executable })), calibration: calibrationIds.map(({ token, actual }) => ({ token, actual })) }))
+      } catch (error) { writeFileSync('evidence/probes-error.json', JSON.stringify({ reason: String(error) })) }
     }
   }
   record({ kind: 'cdp-connected' })
@@ -103,3 +153,4 @@ const retry = setInterval(() => {
   connecting = true
   connect().then(() => clearInterval(retry)).catch(() => { connecting = false })
 }, 500)
+if (probes) setInterval(() => syncProbePhase().catch(error => record({ kind: 'probe-error', error: String(error) })), 100)
