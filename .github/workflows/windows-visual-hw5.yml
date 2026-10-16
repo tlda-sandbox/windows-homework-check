@@ -42,7 +42,7 @@ jobs:
           if (!(Test-Path $exe)) { throw "Positron missing: $exe" }
           "POSITRON_EXE=$exe" | Add-Content $env:GITHUB_ENV
           New-Item -ItemType Directory -Force evidence, iso/user, iso/ext, iso/shared | Out-Null
-          & "$env:LOCALAPPDATA\Programs\Positron\bin\positron.cmd" --user-data-dir="$pwd/iso/user" --extensions-dir="$pwd/iso/ext" --install-extension quarto.quarto --force
+          & "$env:LOCALAPPDATA\Programs\Positron\bin\positron.cmd" --user-data-dir="$pwd/iso/user" --extensions-dir="$pwd/iso/ext" --install-extension quarto.quarto@1.138.0 --force
           if ($LASTEXITCODE) { throw 'Quarto extension installation failed' }
       - name: Download HW5 exactly from the live course
         env:
@@ -118,6 +118,10 @@ jobs:
           Drive @('visual-eval', '(async()=>{const e=[...document.images].find(e=>e.src.includes("plot-convergence-in-probability")); if(!e || !e.complete || !e.naturalWidth) throw Error("Convergence image missing"); e.scrollIntoView({block:"center"}); await new Promise(r=>setTimeout(r,1000)); return {src:e.src,width:e.naturalWidth}})()')
           Drive @('screenshot','evidence/visual-convergence.png')
           Copy-Item $qmd evidence/before-preview.qmd
+          $control = & node positron-drive.mjs 9222 preview homework-comparing-estimators.html 3 2>&1
+          $controlStatus = $LASTEXITCODE
+          $control | Set-Content evidence/preview-before-control.txt
+          if ($controlStatus -ne 17) { throw 'Preview detector did not reject the unopened Viewer document' }
           Drive @('clicktext','Preview')
           Start-Sleep 5
           Drive @('eval','document.body.innerText')
@@ -133,6 +137,8 @@ jobs:
           Copy-Item $qmd evidence/after-preview.qmd
           if (!$rendered) { throw 'The Positron Preview button did not produce HW5 HTML' }
           Copy-Item $html evidence/windows-rendered.html
+          Drive @('preview','homework-comparing-estimators.html','90')
+          Drive @('screenshot','evidence/native-preview-loaded.png')
           python verify-visual-save.py evidence/downloaded.qmd evidence/after-preview.qmd
           if ($LASTEXITCODE) { throw 'The visual editor changed homework content; see the comparison above and retained source files' }
           $renderText = Get-Content $html -Raw

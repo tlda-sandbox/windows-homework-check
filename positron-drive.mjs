@@ -36,7 +36,8 @@ const send = (method, params = {}, sessionId) => new Promise(r => {
 })
 
 const tg = await send('Target.getTargets')
-const page = tg.result.targetInfos.find(x => x.type === 'page')
+const pages = tg.result.targetInfos.filter(x => x.type === 'page')
+const page = pages.find(x => x.url.startsWith('vscode-file:')) || pages.find(x => x.title.includes('Positron')) || pages[0]
 if (!page) { console.error('no page target'); process.exit(3) }
 console.error(`# target: ${page.title}`)
 const sid = (await send('Target.attachToTarget', { targetId: page.targetId, flatten: true })).result.sessionId
@@ -56,6 +57,69 @@ const pressEnter = async () => {
 }
 
 switch (action) {
+  case 'preview': {
+    const filename = args[0]
+    if (!filename) { console.error('preview requires the expected HTML filename'); process.exit(17) }
+    const deadline = Date.now() + (Number(args[1]) || 90) * 1000
+    const sessions = new Map()
+    const observed = new Map()
+    const expected = value => value?.hasDocument && decodeURIComponent(new URL(value.url).pathname).endsWith('/' + filename)
+    const bounded = (method, params = {}, session) => Promise.race([
+      send(method, params, session),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('CDP timed out: ' + method)), 3000))
+    ])
+    do {
+      const infos = (await bounded('Target.getTargets')).result.targetInfos
+      for (const target of infos.filter(t => ['page', 'iframe', 'webview', 'other'].includes(t.type))) {
+        try {
+          if (!sessions.has(target.targetId)) {
+            sessions.set(target.targetId, (await bounded('Target.attachToTarget', { targetId: target.targetId, flatten: true })).result?.sessionId)
+          }
+          const child = sessions.get(target.targetId)
+          if (!child) continue
+          const tree = await bounded('Page.getFrameTree', {}, child)
+          const frames = []
+          const walk = node => { if (!node) return; frames.push(node.frame); for (const c of node.childFrames || []) walk(c) }
+          walk(tree.result?.frameTree)
+          for (const frame of frames) {
+            const contextId = (await bounded('Page.createIsolatedWorld', { frameId: frame.id, worldName: 'homework-preview-check' }, child)).result?.executionContextId
+            if (!contextId) continue
+            const result = await bounded('Runtime.evaluate', {
+              contextId, returnByValue: true,
+              expression: `(()=>{
+                const main=document.getElementById('quarto-document-content');
+                if(!main) return {url:location.href,ready:false,title:document.title};
+                const images=[...main.querySelectorAll('img')].map(e=>({src:e.getAttribute('src'),complete:e.complete,width:e.naturalWidth}));
+                const mathCount=main.querySelectorAll('.katex,mjx-container,.MathJax').length;
+                const rect=main.getBoundingClientRect();
+                return {
+                  url:location.href,title:document.title,hasDocument:true,heading:main.querySelector('h1')?.textContent,
+                  ready:document.readyState==='complete' && rect.width>0 && rect.height>0 &&
+                    images.length>0 && images.every(e=>e.complete && e.width>0) && mathCount>0,
+                  images,mathCount,mathErrors:[...main.querySelectorAll('.katex-error,merror')].map(e=>e.textContent),
+                  text:main.innerText.slice(0,700)
+                };
+              })()`
+            }, child)
+            const value = result.result?.result?.value
+            if (value) observed.set(frame.id, value)
+            if (value?.ready && expected(value)) {
+              if (value.mathErrors.length) { console.error(JSON.stringify(value)); process.exit(19) }
+              console.log(JSON.stringify(value))
+              process.exit(0)
+            }
+          }
+        } catch (error) {
+          observed.set(target.targetId, {target:target.url,error:String(error)})
+        }
+      }
+      await new Promise(r => setTimeout(r, 1000))
+    } while (Date.now() < deadline)
+    const samples = [...observed.values()]
+    console.error('Native Preview did not display the expected homework: ' + JSON.stringify(samples))
+    if (!samples.some(value => typeof value.ready === 'boolean')) process.exit(18)
+    process.exit(samples.some(expected) ? 20 : 17)
+  }
   case 'visual-eval': {
     const infos = (await send('Target.getTargets')).result.targetInfos
     for (const target of infos.filter(t => ['page', 'iframe'].includes(t.type))) {
