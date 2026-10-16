@@ -1,0 +1,126 @@
+name: Windows future homework visual mode
+on:
+  workflow_dispatch:
+jobs:
+  visual:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: release
+      - uses: quarto-dev/quarto-actions/setup@v2
+      - name: Install course packages
+        run: |
+          Rscript -e "install.packages(c('tidyverse','gt','htmltools','kableExtra','knitr','rmarkdown','scales'), repos='https://cloud.r-project.org')"
+          if ($LASTEXITCODE) { throw 'Course package installation failed' }
+      - name: Prepare private candidate and isolated Windows IDE
+        env:
+          CANDIDATE_KEY: ${{ secrets.CANDIDATE_KEY }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ProgressPreference = 'SilentlyContinue'
+          New-Item -ItemType Directory -Force evidence, iso/user, iso/ext, iso/shared | Out-Null
+          node candidate-crypt.mjs decrypt candidate.enc candidate.zip
+          if ($LASTEXITCODE) { throw 'Candidate decryption failed' }
+          node candidate-crypt.mjs decrypt extension.enc candidate.vsix
+          if ($LASTEXITCODE) { throw 'Extension decryption failed' }
+          $pins = Get-Content candidate-pins.json -Raw | ConvertFrom-Json
+          if ((Get-FileHash candidate.zip -Algorithm SHA256).Hash.ToLower() -ne $pins.archive) { throw 'Candidate archive hash mismatch' }
+          if ((Get-FileHash candidate.vsix -Algorithm SHA256).Hash.ToLower() -ne $pins.extension) { throw 'Candidate extension hash mismatch' }
+          Copy-Item candidate-pins.json evidence/input-pins.json
+          Rscript --version 2>&1 | Set-Content evidence/r-version.txt
+          quarto --version | Set-Content evidence/quarto-version.txt
+          Expand-Archive candidate.zip -DestinationPath extract
+          Copy-Item extract/homework-causality/homework-causality.qmd evidence/downloaded.qmd
+          Invoke-WebRequest 'https://cdn.posit.co/positron/releases/win/x86_64/Positron-2026.10.0-297-UserSetup-x64.exe' -OutFile setup.exe
+          $p = Start-Process ./setup.exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-','/CURRENTUSER' -PassThru
+          if (!$p.WaitForExit(300000) -or $p.ExitCode -ne 0) { throw 'Positron installation failed' }
+          $exe = "$env:LOCALAPPDATA\Programs\Positron\Positron.exe"
+          if (!(Test-Path $exe)) { throw 'Positron executable missing' }
+          "POSITRON_EXE=$exe" | Add-Content $env:GITHUB_ENV
+          $cli = "$env:LOCALAPPDATA\Programs\Positron\bin\positron.cmd"
+          & $cli --user-data-dir="$pwd/iso/user" --extensions-dir="$pwd/iso/ext" --install-extension quarto.quarto@1.138.0 --force
+          if ($LASTEXITCODE) { throw 'Quarto extension installation failed' }
+          & $cli --user-data-dir="$pwd/iso/user" --extensions-dir="$pwd/iso/ext" --install-extension "$pwd/candidate.vsix" --force
+          if ($LASTEXITCODE) { throw 'Trial extension installation failed' }
+          & $cli --user-data-dir="$pwd/iso/user" --extensions-dir="$pwd/iso/ext" --list-extensions --show-versions | Set-Content evidence/extensions.txt
+      - name: Folder open, Visual mode, ordinary cells, native Preview
+        timeout-minutes: 15
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $folder = "$pwd/extract/homework-causality"
+          $qmd = "$folder/homework-causality.qmd"
+          $launch = @("--user-data-dir=$pwd/iso/user", "--extensions-dir=$pwd/iso/ext", "--shared-data-dir=$pwd/iso/shared", '--remote-debugging-port=9222', '--new-window', '--disable-workspace-trust', $qmd, $folder)
+          Start-Process $env:POSITRON_EXE -ArgumentList $launch
+          $ready = $false
+          for ($i=0; $i -lt 60; $i++) {
+            try { Invoke-RestMethod http://127.0.0.1:9222/json/version | ConvertTo-Json | Set-Content evidence/ide-version.json; $ready=$true; break } catch { Start-Sleep 2 }
+          }
+          if (!$ready) { throw 'Windows Positron did not start' }
+          npm install ws --no-save --silent
+          function Drive([string[]] $a) {
+            $out = & node positron-drive.mjs 9222 @a 2>&1
+            $rc = $LASTEXITCODE
+            $out | Add-Content evidence/visual-run.txt
+            if ($rc) { throw "IDE driver failed ($rc), action: $($a[0]); details retained in encrypted evidence" }
+          }
+          Start-Sleep 15
+          Drive @('command','Quarto: Edit in Visual Mode')
+          Start-Sleep 15
+          Drive @('screenshot','evidence/visual-open.png')
+          Drive @('visual-eval', 'JSON.stringify({text:document.body.innerText,mathErrors:[...document.querySelectorAll(".katex-error,merror")].map(e=>e.textContent),code:[...document.querySelectorAll(".cm-editor,.CodeMirror")].map(e=>e.innerText),folds:[...document.querySelectorAll("button,[role=button]")].map(e=>({text:e.innerText,title:e.title,label:e.getAttribute("aria-label")}))})')
+          Drive @('visual-code','set.seed(1)')
+          Drive @('command','Quarto: Run All Cells')
+          Start-Sleep 30
+          Drive @('command','Focus Console')
+          Drive @('r', 'cat("FUTURE_COMPLETION:", identical(tiny.pop$tau,c(4,0,3,0,4,2)) && abs(mean(tiny.pop$tau)-13/6)<1e-12 && nrow(michigan)==119999 && length(tau.hats)==1000 && length(covers)==1000 && is.finite(true.ate), "\n")')
+          Drive @('requireexpr', 'document.getElementById("workbench.panel.positronConsole")?.textContent.includes("FUTURE_COMPLETION: TRUE")', '180')
+          Drive @('console')
+          Drive @('screenshot','evidence/console-completion.png')
+          Copy-Item $qmd evidence/after-visual.qmd
+          Drive @('command','View: Toggle Zen Mode')
+          Drive @('visual-eval', '(async()=>{const e=[...document.querySelectorAll("h1,h2,h3")].find(e=>e.textContent.includes("Potential Outcomes"));if(!e)throw Error("Potential Outcomes heading missing");e.scrollIntoView();await new Promise(r=>setTimeout(r,1000));return {math:document.querySelectorAll(".katex,mjx-container,.MathJax").length,errors:[...document.querySelectorAll(".katex-error,merror")].map(e=>e.textContent)}})()')
+          Drive @('screenshot','evidence/visual-potential-outcomes.png')
+          Drive @('visual-eval', '(async()=>{const e=[...document.querySelectorAll("h1,h2,h3")].find(e=>e.textContent.includes("Standard Errors"));if(!e)throw Error("Standard Errors heading missing");e.scrollIntoView();await new Promise(r=>setTimeout(r,1000));return e.textContent})()')
+          Drive @('screenshot','evidence/visual-variance.png')
+          Copy-Item $qmd evidence/before-preview.qmd
+          $control = & node positron-drive.mjs 9222 preview homework-causality.html 3 0 2>&1
+          $controlStatus = $LASTEXITCODE
+          $control | Set-Content evidence/preview-before-control.txt
+          if ($controlStatus -ne 17) { throw 'Preview detector did not reject the unopened Viewer document' }
+          Drive @('clicktext','Preview')
+          Drive @('preview','homework-causality.html','180','0')
+          Drive @('screenshot','evidence/native-preview-loaded.png')
+          Copy-Item $qmd evidence/after-preview.qmd
+          Copy-Item "$folder/homework-causality.html" evidence/windows-rendered.html
+          $comparison = & python verify-visual-save.py evidence/downloaded.qmd evidence/after-preview.qmd 2>&1
+          $comparisonStatus = $LASTEXITCODE
+          $comparison | Set-Content evidence/source-comparison.txt
+          if ($comparisonStatus) { throw 'Visual editor changed homework content; see encrypted comparison' }
+          $renderText = Get-Content "$folder/homework-causality.html" -Raw
+          if ($renderText.Contains('library.dir =')) { throw 'Rendered HTML exposes hidden startup cell' }
+          if ([regex]::Matches($renderText, 'id="ans-exr-').Count -ne 13) { throw 'Rendered HTML must preserve 13 answer boxes' }
+      - name: Encrypt retained evidence
+        if: always()
+        env:
+          CANDIDATE_KEY: ${{ secrets.CANDIDATE_KEY }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (Test-Path iso/user/logs) { Copy-Item iso/user/logs evidence/logs -Recurse }
+          if (Test-Path extract/homework-causality/homework-causality.qmd) { Copy-Item extract/homework-causality/homework-causality.qmd evidence/final.qmd }
+          if (Test-Path extract/homework-causality/homework-causality.html) { Copy-Item extract/homework-causality/homework-causality.html evidence/final.html }
+          & node positron-drive.mjs 9222 screenshot evidence/final-native.png 2>&1 | Set-Content evidence/final-capture.txt
+          & node positron-drive.mjs 9222 eval 'document.body.innerText' 2>&1 | Set-Content evidence/final-workbench.txt
+          Compress-Archive evidence/* -DestinationPath evidence.zip
+          node candidate-crypt.mjs encrypt evidence.zip evidence.enc
+          if ($LASTEXITCODE) { throw 'Evidence encryption failed' }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-future-private-evidence
+          path: evidence.enc

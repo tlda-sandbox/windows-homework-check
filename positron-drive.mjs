@@ -61,6 +61,7 @@ switch (action) {
     const filename = args[0]
     if (!filename) { console.error('preview requires the expected HTML filename'); process.exit(17) }
     const deadline = Date.now() + (Number(args[1]) || 90) * 1000
+    const minimumImages = Number(args[2] ?? 1)
     const sessions = new Map()
     const observed = new Map()
     const expected = value => value?.hasDocument && decodeURIComponent(new URL(value.url).pathname).endsWith('/' + filename)
@@ -95,7 +96,7 @@ switch (action) {
                 return {
                   url:location.href,title:document.title,hasDocument:true,heading:main.querySelector('h1')?.textContent,
                   ready:document.readyState==='complete' && rect.width>0 && rect.height>0 &&
-                    images.length>0 && images.every(e=>e.complete && e.width>0) && mathCount>0,
+                    images.length>=${minimumImages} && images.every(e=>e.complete && e.width>0) && mathCount>0,
                   images,mathCount,mathErrors:[...main.querySelectorAll('.katex-error,merror')].map(e=>e.textContent),
                   text:main.innerText.slice(0,700)
                 };
@@ -162,7 +163,7 @@ switch (action) {
           contextId, returnByValue: true, awaitPromise: true,
           expression: `(async()=>{
             const cells=[...document.querySelectorAll('.CodeMirror, .cm-editor, .ace_editor, pre')];
-            const cell=cells.find(e=>(e.innerText||e.textContent||'').includes('library.files'));
+            const cell=cells.find(e=>(e.innerText||e.textContent||'').includes(${JSON.stringify(args[0] || 'library.files')}));
             if(!cell) return {found:false,url:location.href,sample:document.body?.innerText.slice(0,300),classes:[...new Set([...document.querySelectorAll('[contenteditable],textarea')].map(e=>e.className))]};
             cell.scrollIntoView({block:'center'});
             await new Promise(r=>setTimeout(r,1000));
