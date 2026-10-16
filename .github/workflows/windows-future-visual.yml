@@ -150,6 +150,7 @@ jobs:
             if ($rc) { throw "IDE driver failed ($rc), action: $($a[0]); private evidence retained" }
           }
           Drive @('requireexpr', '[...document.querySelectorAll(".tab")].some(e=>e.textContent.includes("homework-causality.qmd"))', '90')
+          Drive @('requireexpr', '[...document.querySelectorAll("a,button,[role=button],.action-label")].some(e=>e.textContent.trim()==="Preview"&&e.getBoundingClientRect().width>0)', '90')
           SnapshotFold 'before-visual-command'
           Drive @('command','Quarto: Edit in Visual Mode')
           SnapshotFold 'after-visual-command'

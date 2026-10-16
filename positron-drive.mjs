@@ -212,7 +212,13 @@ switch (action) {
       if (rect && typeof rect === 'object') break
       await new Promise(r => setTimeout(r, 500))
     } while (Date.now() < deadline)
-    if (!rect || typeof rect !== 'object') { console.error('Required IDE command was not offered: ' + label); process.exit(12) }
+    if (!rect || typeof rect !== 'object') {
+      console.error('Required IDE command was not offered: ' + label)
+      console.error(await ev(`JSON.stringify({input:document.querySelector('.quick-input-widget input')?.value,rows:[...document.querySelectorAll('.quick-input-widget .monaco-list-row')].map(e=>e.innerText)})`))
+      const shot = await send('Page.captureScreenshot', { format: 'png' }, sid)
+      if (shot.result?.data) (await import('node:fs')).writeFileSync('evidence/command-not-offered.png', Buffer.from(shot.result.data, 'base64'))
+      process.exit(12)
+    }
     await pressEnter()
     console.log('Selected IDE command: ' + label)
     break
