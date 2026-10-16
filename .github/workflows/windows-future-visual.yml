@@ -206,9 +206,11 @@ jobs:
             foreach ($log in $logs) {
               Get-Content $log.FullName | Where-Object { $_ -match '_doActivateExtension.*(tlda-labs[.]tlda-classroom|quarto[.]quarto)' } | Write-Output
             }
-            Get-Content evidence/visual-run.txt | Where-Object { $_.StartsWith('{') } | ForEach-Object {
-              $record = $_ | ConvertFrom-Json
-              if ($record.operation) { $record | Select-Object operation,found,label | ConvertTo-Json -Compress | Write-Output }
+            if (Test-Path evidence/visual-run.txt) {
+              Get-Content evidence/visual-run.txt | Where-Object { $_.StartsWith('{') } | ForEach-Object {
+                $record = $_ | ConvertFrom-Json
+                if ($record.operation) { $record | Select-Object operation,found,label | ConvertTo-Json -Compress | Write-Output }
+              }
             }
           }
           if (Test-Path extract/homework-causality/homework-causality.qmd) { Copy-Item extract/homework-causality/homework-causality.qmd evidence/final.qmd }
