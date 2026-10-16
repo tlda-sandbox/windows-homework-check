@@ -133,7 +133,8 @@ jobs:
           Copy-Item $qmd evidence/after-preview.qmd
           if (!$rendered) { throw 'The Positron Preview button did not produce HW5 HTML' }
           Copy-Item $html evidence/windows-rendered.html
-          if ((Get-FileHash evidence/downloaded.qmd).Hash -ne (Get-FileHash $qmd).Hash) { throw 'Preview changed the downloaded QMD; inspect retained source files' }
+          python verify-visual-save.py evidence/downloaded.qmd evidence/after-preview.qmd
+          if ($LASTEXITCODE) { throw 'The visual editor changed homework content; see the comparison above and retained source files' }
           $renderText = Get-Content $html -Raw
           if ($renderText.Contains('library.dir =')) { throw 'Rendered HTML exposes the hidden startup cell' }
           if ([regex]::Matches($renderText, 'id="ans-exr-').Count -ne 8) { throw 'Rendered HTML must preserve all eight answer boxes' }
