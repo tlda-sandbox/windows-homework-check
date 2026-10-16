@@ -193,6 +193,23 @@ jobs:
               $budget += $log.Length
               $index++
             }
+            # Public diagnostics contain only hashes, timing and native labels.
+            # Full source-bearing logs/DOM/screenshots remain in encrypted evidence.
+            foreach ($recordFile in @('evidence/fold-stages.jsonl','evidence/fold-observer.jsonl')) {
+              if (Test-Path $recordFile) {
+                Get-Content $recordFile | ForEach-Object {
+                  $record = $_ | ConvertFrom-Json
+                  $record | Select-Object kind,observedAt,stage,reason,sha256,marker,modifiedAt,note | ConvertTo-Json -Compress | Write-Output
+                }
+              }
+            }
+            foreach ($log in $logs) {
+              Get-Content $log.FullName | Where-Object { $_ -match '_doActivateExtension.*(tlda-labs[.]tlda-classroom|quarto[.]quarto)' } | Write-Output
+            }
+            Get-Content evidence/visual-run.txt | Where-Object { $_.StartsWith('{') } | ForEach-Object {
+              $record = $_ | ConvertFrom-Json
+              if ($record.operation) { $record | Select-Object operation,found,label | ConvertTo-Json -Compress | Write-Output }
+            }
           }
           if (Test-Path extract/homework-causality/homework-causality.qmd) { Copy-Item extract/homework-causality/homework-causality.qmd evidence/final.qmd }
           if (Test-Path extract/homework-causality/homework-causality.html) { Copy-Item extract/homework-causality/homework-causality.html evidence/final.html }
